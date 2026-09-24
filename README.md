@@ -14,7 +14,7 @@ with a 2 NM range“, FCOM).
 | -------- | ----------------------------- | ------------- |
 | **FlyByWire A380X** | beide NDs: Modus ARC, Range ZOOM 2 NM (OANS) | Navigraph im flyPad verknüpft (sonst gibt es kein OANS, dann ändert das Addon nichts) |
 | **iniBuilds A350** | beide NDs: Modus ARC, Range ZOOM 2 NM (ANF), F/O-Seite 2 s nach dem Captain | Navigraph (für die ANF-Karten) |
-| **Synaptic A220** | beide MAP-Displays: Range 1 NM (Airport Moving Map) | **Synaptic A220 v1.0.10 oder neuer**, die erste Version mit Flughafenkarte (mit Navigraph vollständig, ohne nur Pisten). Bis v1.0.9 zeigt der A220 in diesem Bereich „AIRPORT MAP FAULT“. |
+| **Synaptic A220** | beide MAP-Displays: Range 1 NM (Airport Moving Map) | **Synaptic A220 v1.0.10 oder neuer**, die erste Version mit Flughafenkarte (mit Navigraph vollständig, ohne nur Pisten), oder v1.0.9 mit einer Community-Mod für die Flughafenkarte. Ohne beides zeigt der A220 in diesem Bereich „AIRPORT MAP FAULT“. |
 
 Hat eine Seite schon eine ZOOM-Stufe gewählt, bleibt diese. Andere Flugzeuge ignoriert das
 Addon komplett.
@@ -56,7 +56,7 @@ Addon komplett.
 - **FBW A380X, Meldung „OANS not available“:** Das OANS braucht die Navigraph-Anbindung im
   flyPad.
 - **A220 zeigt „AIRPORT MAP FAULT“:** Deine A220-Version hat noch keine Flughafenkarte. Update
-  auf v1.0.10 oder neuer.
+  auf v1.0.10 oder neuer (laut Synaptic für den 25.09.2026 angekündigt).
 - **iniBuilds A350:** Der A350 hat eine eigene Option dafür („autozoom“ im OIS). Ist sie an,
   ist die Karte beim Auslösen schon da und das Addon lässt sie so. Beides zusammen stört sich
   nicht.
