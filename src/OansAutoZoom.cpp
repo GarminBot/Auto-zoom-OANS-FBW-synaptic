@@ -128,7 +128,7 @@ const AircraftProfile* findProfile(const char* title, const char* atcModel) {
 
 enum DataDefinitionId : SIMCONNECT_DATA_DEFINITION_ID { DEF_AIRCRAFT = 0 };
 enum DataRequestId : SIMCONNECT_DATA_REQUEST_ID { REQ_AIRCRAFT = 0 };
-enum ClientEventId : SIMCONNECT_CLIENT_EVENT_ID { EVT_ONE_SECOND = 0 };
+enum ClientEventId : SIMCONNECT_CLIENT_EVENT_ID { EVT_ONE_SECOND = 0, EVT_FLIGHT_LOADED = 1 };
 
 // Order and types must match the SimConnect_AddToDataDefinition calls in module_init.
 struct AircraftData {
@@ -232,6 +232,10 @@ void CALLBACK dispatchProc(SIMCONNECT_RECV* pData, DWORD cbData, void* pContext)
         // Requested anew every second, so it keeps working across flights and aircraft changes.
         SimConnect_RequestDataOnSimObject(g_simConnect, REQ_AIRCRAFT, DEF_AIRCRAFT, SIMCONNECT_OBJECT_ID_USER,
                                           SIMCONNECT_PERIOD_ONCE);
+      } else if (event->uEventID == EVT_FLIGHT_LOADED) {
+        // A new flight starts from scratch, e.g. at a gate after quitting the last one in the air.
+        g_profile = nullptr;
+        resetFlightState();
       }
       break;
     }
@@ -285,6 +289,7 @@ extern "C" MSFS_CALLBACK void module_init(void) {
   track(SimConnect_AddToDataDefinition(g_simConnect, DEF_AIRCRAFT, "PLANE ALT ABOVE GROUND", "Feet",
                                        SIMCONNECT_DATATYPE_FLOAT64));
   track(SimConnect_SubscribeToSystemEvent(g_simConnect, EVT_ONE_SECOND, "1sec"));
+  track(SimConnect_SubscribeToSystemEvent(g_simConnect, EVT_FLIGHT_LOADED, "FlightLoaded"));
   // In a WASM module a single call is enough; afterwards the sim calls dispatchProc for every message.
   track(SimConnect_CallDispatch(g_simConnect, dispatchProc, nullptr));
 

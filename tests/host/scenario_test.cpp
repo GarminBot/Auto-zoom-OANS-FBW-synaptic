@@ -59,18 +59,22 @@ void fbwHandleEvent(const std::string& name, int value) {
   }
 }
 
-void tick() {
-  g_dataRequested = false;
-
-  // "1sec" system event -> the module requests the aircraft data once.
+void sendSystemEvent(const char* systemEventName) {
   for (const auto& [id, name] : g_systemEvents) {
-    if (name == "1sec") {
+    if (name == systemEventName) {
       SIMCONNECT_RECV_EVENT event{};
       event.dwID = SIMCONNECT_RECV_ID_EVENT;
       event.uEventID = id;
       g_dispatch(&event, sizeof(event), nullptr);
     }
   }
+}
+
+void tick() {
+  g_dataRequested = false;
+
+  // "1sec" system event -> the module requests the aircraft data once.
+  sendSystemEvent("1sec");
   if (!g_dataRequested) {
     fail("module did not request aircraft data on the 1sec event");
     return;
@@ -283,6 +287,12 @@ int main() {
   fly(2, true, 130, 0);
   fly(3, true, 60, 0);
   expectEvents("FBW: flight started in the air", {"A32NX.FCU_EFIS_L_RANGE_SET=3", "A32NX.FCU_EFIS_R_RANGE_SET=3"});
+
+  // Quitting in the air and starting a new flight at a gate must not count as a landing.
+  takeOffAndCruise();
+  sendSystemEvent("FlightLoaded");
+  fly(30, true, 0, 0);
+  expectEvents("FBW: new flight loaded at a gate after quitting in the air", {});
 
   module_deinit();
 
