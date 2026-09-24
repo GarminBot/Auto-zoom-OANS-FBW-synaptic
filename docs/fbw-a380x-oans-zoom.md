@@ -127,33 +127,26 @@ SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EVT_RANGE
    Position um eins, wenn sie über 5 liegt. Beim Wechsel **aus** ARC hebt sie sie um eins an,
    außer bei Position 4
    ([`A380FcuComputer.cpp` Z. 2218–2227](https://github.com/flybywiresim/aircraft/blob/2baa2b35eadaf4c78e172ce41bbe6b40b4aeafb2/fbw-a380x/src/wasm/fbw_a380/src/model/A380FcuComputer.cpp#L2218-L2227)).
-   Setz deshalb zuerst den Modus und erst **in einem späteren Frame** die Range.
+   Für das Addon spielt das keine Rolle: Es wechselt nur **in** ARC und setzt eine ZOOM-Position
+   (0–4), die dabei nie verschoben wird. Ein im selben FCU-Durchlauf verarbeitetes `RANGE_SET`
+   wird vor der Verschiebung übernommen und ist mit 3 ebenfalls nicht betroffen.
 2. **Events wirken nur mit geladenem FBW-A380X und laufender FCU.** In anderen Flugzeugen
-   passiert beim Auslösen nichts, es schadet aber auch nicht. Prüf trotzdem, ob der A380X geladen
-   ist, damit dein Addon nicht ins Leere arbeitet.
+   passiert beim Auslösen nichts, es schadet aber auch nicht.
 3. **Das ist keine stabile API.** FBW baut gerade eine „stabile Cockpit-API“ über Input Events
    (`B:`-Variablen) auf, siehe
    [`a380x-input-events.md`](https://github.com/flybywiresim/aircraft/blob/2baa2b35eadaf4c78e172ce41bbe6b40b4aeafb2/fbw-a380x/docs/a380x-input-events.md).
    Bisher ist dort nur das RMP dokumentiert. Sobald der EFIS-CP dazukommt, auf `B:`-Events umstellen.
-4. **Manuelle Eingaben respektieren.** Dreht der Pilot selbst am Knopf, ändert sich
-   `L:A32NX_EFIS_x_ND_RANGE` bzw. `…_OANS_RANGE`, ohne dass dein Addon etwas gesendet hat. In dem
-   Fall die Automatik eine Weile pausieren, sonst kämpft sie gegen den Piloten.
-5. **Nicht jeden Frame senden.** Nur bei einem Wechsel der Zielstufe senden, mit Hysterese
-   (z. B. unterschiedliche Schwellen beim Beschleunigen und Abbremsen), sonst springt die Karte hin und her.
-6. **Nur A380X.** Die A32NX-FCU hat keine ZOOM-Stufen (`a320EfisRangeSettings = [10 … 320]`).
+4. **Nur A380X.** Die A32NX-FCU hat keine ZOOM-Stufen (`a320EfisRangeSettings = [10 … 320]`).
    Das OANC ist dort ein separates Instrument, das bei diesem Commit nicht in der `panel.cfg` des
-   A32NX eingebunden ist. Ein Auto-Zoom über die FCU-Events funktioniert also nur im A380X.
+   A32NX eingebunden ist.
 
-## Vorschlag für die Auto-Zoom-Logik
+## Was das Addon im A380X tut
 
-Nur als Ausgangspunkt, die Schwellen musst du im Sim abstimmen:
+Nach der Landung, einmal pro Seite (F/O eine Sekunde nach dem Captain), und nur wenn
+`L:A32NX_OANS_AVAILABLE` = 1 ist:
 
-| Situation (Seite L und/oder R)                 | Zielposition             |
-| ---------------------------------------------- | ------------------------ |
-| am Boden, GS < 12 kt (Rollen um Kurven, Gate)  | 1 (ZOOM 0,5 NM)          |
-| am Boden, 12–30 kt (normales Rollen)           | 2 (ZOOM 1 NM)            |
-| am Boden, > 30 kt (Start- oder Landerollstrecke) | 3 oder 4 (ZOOM 2/5 NM) |
-| in der Luft, nach dem Start                    | zurück auf die Range, die vor dem Zoomen eingestellt war (z. B. 5 = 10 NM) |
+1. ND-Modus nicht ARC → `3 (>K:A32NX.FCU_EFIS_x_MODE_SET)`
+2. keine ZOOM-Stufe gewählt (`L:A32NX_EFIS_x_ND_RANGE` ≠ 0) → `3 (>K:A32NX.FCU_EFIS_x_RANGE_SET)` (ZOOM 2 NM)
 
-Zu lesende SimVars: `SIM ON GROUND` (Bool), `GROUND VELOCITY` (Knots), optional
-`PLANE ALT ABOVE GROUND` (Feet), dazu die oben genannten `L:A32NX_EFIS_*`-Variablen.
+Das entspricht dem echten A350 („At landing, the ND automatically displays the ANF in ARC mode,
+with a 2 NM range“). Zeitpunkt und Bedingungen: [aircraft-profiles.md](aircraft-profiles.md).
