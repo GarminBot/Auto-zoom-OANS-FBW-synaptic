@@ -1,8 +1,8 @@
 // Host test for src/OansAutoZoom.cpp: runs the module logic outside the simulator.
 //
-// SimConnect and execute_calculator_code are faked. The fake only understands the
-// two RPN forms the module is allowed to use - "(L:NAME)" to read and
-// "<number> (>K:NAME)" to send an event - and fails on anything else.
+// SimConnect, execute_calculator_code and check_named_variable are faked, together with
+// the parts of the three supported aircraft the module talks to. The fake RPN parser only
+// accepts the exact command forms the module is meant to use and fails on anything else.
 // Build and run: tests/host/run.sh
 
 #include <MSFS/Legacy/gauges.h>
@@ -10,10 +10,11 @@
 #include <MSFS/MSFS_WindowsTypes.h>
 #include <SimConnect.h>
 
+#include <algorithm>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <map>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -29,152 +30,250 @@ void fail(const std::string& message) {
   std::printf("FAIL %s\n", message.c_str());
 }
 
-// --- Fake simulator ---------------------------------------------------------
+// --- Fake aircraft ------------------------------------------------------------
 
-DispatchProc g_dispatch = nullptr;
-std::map<SIMCONNECT_CLIENT_EVENT_ID, std::string> g_systemEvents;
-bool g_dataRequested = false;
-
-std::map<std::string, double> g_lvars;
-std::vector<std::string> g_sentEvents;  // "NAME=value", cleared by each tick()
+enum class Type { Other, FbwA380x, IniA350, IniA320, SynapticA220 };
 
 struct Aircraft {
+  Type type = Type::Other;
   std::string title;
-  std::string atcModel;
+  std::string path;
   bool onGround = true;
   double groundSpeedKts = 0;
   double altitudeAglFt = 0;
 } g_aircraft;
 
-// Fake FBW A380X: FCU state behind the custom events.
-void fbwHandleEvent(const std::string& name, int value) {
-  for (const char* side : {"L", "R"}) {
-    const std::string prefix = std::string("A32NX.FCU_EFIS_") + side;
-    if (name == prefix + "_MODE_SET") {
-      g_lvars[std::string("A32NX_EFIS_") + side + "_ND_MODE"] = value;
-    } else if (name == prefix + "_RANGE_SET") {
-      g_lvars[std::string("A32NX_EFIS_") + side + "_OANS_RANGE"] = value <= 4 ? value : 5;
-      g_lvars[std::string("A32NX_EFIS_") + side + "_ND_RANGE"] = value <= 4 ? 0 : value - 4;
-    }
+std::map<std::string, double> g_lvars;  // L-vars the loaded aircraft has registered
+std::vector<std::string> g_commands;    // every command sent to the aircraft, cleared by fly()
+
+// Synaptic A220 map ranges; the knob stops at both ends.
+const std::vector<std::string> kA220Ranges = {"1000 FT", "2000 FT", "3000 FT", "1 NM", "2 NM", "5 NM",
+                                              "10 NM",   "20 NM",   "40 NM",   "80 NM", "160 NM", "320 NM"};
+int g_a220Range[3] = {0, 6, 6};  // index per CTP (1 and 2)
+
+void fbwApplyEvent(const std::string& name, int value) {
+  static const std::regex pattern("A32NX\\.FCU_EFIS_([LR])_(MODE|RANGE)_SET");
+  std::smatch match;
+  if (!std::regex_match(name, match, pattern)) {
+    fail("unknown FBW event " + name);
+    return;
+  }
+  const std::string prefix = "A32NX_EFIS_" + match[1].str();
+  if (match[2] == "MODE") {
+    g_lvars[prefix + "_ND_MODE"] = value;
+  } else {
+    g_lvars[prefix + "_OANS_RANGE"] = value <= 4 ? value : 5;
+    g_lvars[prefix + "_ND_RANGE"] = value <= 4 ? 0 : value - 4;
   }
 }
+
+void a220ApplyEvent(const std::string& name) {
+  static const std::regex pattern("A220_CTP_RANGE_([12])_(INC|DEC)");
+  std::smatch match;
+  if (!std::regex_match(name, match, pattern)) {
+    fail("unknown A220 H-event " + name);
+    return;
+  }
+  int& index = g_a220Range[std::stoi(match[1].str())];
+  index += match[2] == "INC" ? 1 : -1;
+  index = std::max(0, std::min(index, static_cast<int>(kA220Ranges.size()) - 1));
+}
+
+void loadAircraft(Type type, const std::string& title, const std::string& path) {
+  g_aircraft.type = type;
+  g_aircraft.title = title;
+  g_aircraft.path = path;
+  g_lvars.clear();
+}
+
+void setUpFbw(int ndMode, int rangePosition, bool oansAvailable) {
+  loadAircraft(Type::FbwA380x, "FlyByWire A380X (A380-842)",
+               "SimObjects\\AirPlanes\\FlyByWire_A380X\\presets\\flybywire\\FlyByWire_A380_842\\config\\aircraft.cfg");
+  g_lvars["A32NX_OANS_AVAILABLE"] = oansAvailable ? 1 : 0;
+  for (const char* side : {"L", "R"}) {
+    fbwApplyEvent(std::string("A32NX.FCU_EFIS_") + side + "_MODE_SET", ndMode);
+    fbwApplyEvent(std::string("A32NX.FCU_EFIS_") + side + "_RANGE_SET", rangePosition);
+  }
+}
+
+void setUpA350(const std::string& title, int ndMode, int range, bool officialListNames) {
+  loadAircraft(Type::IniA350, title,
+               "SimObjects\\Airplanes\\A350\\presets\\iniBuilds\\A350-900\\config\\aircraft.CFG");
+  const std::string rangeName = officialListNames ? "INI_MAP_MODE_RANGE_" : "INI_MAP_RANGE_";
+  for (const char* side : {"CAPT", "FO"}) {
+    g_lvars[std::string("INI_MAP_MODE_") + side + "_SWITCH"] = ndMode;
+    g_lvars[rangeName + side + "_SWITCH"] = range;
+  }
+}
+
+// --- Fake simulator -------------------------------------------------------------
+
+DispatchProc g_dispatch = nullptr;
+std::map<SIMCONNECT_CLIENT_EVENT_ID, std::string> g_systemEvents;
+bool g_dataRequested = false;
+int g_commandsThisFrame = 0;
 
 void sendSystemEvent(const char* systemEventName) {
   for (const auto& [id, name] : g_systemEvents) {
-    if (name == systemEventName) {
-      SIMCONNECT_RECV_EVENT event{};
-      event.dwID = SIMCONNECT_RECV_ID_EVENT;
+    if (name != systemEventName) {
+      continue;
+    }
+    if (name == "AircraftLoaded" || name == "FlightLoaded") {
+      // Both carry a file name: the aircraft.cfg or the .FLT file.
+      SIMCONNECT_RECV_EVENT_FILENAME event{};
+      event.dwID = SIMCONNECT_RECV_ID_EVENT_FILENAME;
       event.uEventID = id;
+      const std::string fileName = name == "AircraftLoaded" ? g_aircraft.path : "flights\\other\\MainMenu.FLT";
+      std::strncpy(event.szFileName, fileName.c_str(), sizeof(event.szFileName) - 1);
       g_dispatch(&event, sizeof(event), nullptr);
+    } else {
+      fail(std::string("unexpected system event ") + systemEventName);
     }
   }
 }
 
-void tick() {
-  g_dataRequested = false;
-
-  // "1sec" system event -> the module requests the aircraft data once.
-  sendSystemEvent("1sec");
-  if (!g_dataRequested) {
-    fail("module did not request aircraft data on the 1sec event");
-    return;
-  }
-
+// The answer to the module's data request, delivered like SimConnect does on a later dispatch.
+void sendAircraftData() {
   // SimConnect appends the requested data at dwData, beyond the end of the declared struct.
-  alignas(8) unsigned char buffer[sizeof(SIMCONNECT_RECV_SIMOBJECT_DATA) + 1024] = {};
+  alignas(8) unsigned char buffer[sizeof(SIMCONNECT_RECV_SIMOBJECT_DATA) + 512] = {};
   auto* header = reinterpret_cast<SIMCONNECT_RECV_SIMOBJECT_DATA*>(buffer);
   header->dwID = SIMCONNECT_RECV_ID_SIMOBJECT_DATA;
   header->dwRequestID = 0;
   const auto dataOffset = reinterpret_cast<unsigned char*>(&header->dwData) - buffer;
   unsigned char* data = buffer + dataOffset;
   std::strncpy(reinterpret_cast<char*>(data), g_aircraft.title.c_str(), 255);
-  std::strncpy(reinterpret_cast<char*>(data + 256), g_aircraft.atcModel.c_str(), 255);
   const double values[] = {g_aircraft.onGround ? 1.0 : 0.0, g_aircraft.groundSpeedKts, g_aircraft.altitudeAglFt};
-  std::memcpy(data + 512, values, sizeof(values));
+  std::memcpy(data + 256, values, sizeof(values));
   g_dispatch(header, sizeof(buffer), nullptr);
 }
 
-// Runs `seconds` ticks with the given aircraft state; g_sentEvents collects what was sent.
+int g_dataDeliveries = 0;
+
+// One simulator frame at 60 fps.
+void frame() {
+  g_commandsThisFrame = 0;
+  for (const auto& [id, name] : g_systemEvents) {
+    if (name == "Frame") {
+      SIMCONNECT_RECV_EVENT_FRAME event{};
+      event.dwID = SIMCONNECT_RECV_ID_EVENT_FRAME;
+      event.uEventID = id;
+      event.fFrameRate = 60.0f;
+      event.fSimSpeed = 1.0f;
+      g_dispatch(&event, sizeof(event), nullptr);
+    }
+  }
+  if (g_dataRequested) {
+    g_dataRequested = false;
+    ++g_dataDeliveries;
+    sendAircraftData();
+  }
+}
+
+// One simulated second: 60 frames. The module asks for the aircraft data once per second; the
+// fake keeps that at the first frame of every tick (see main), so commands follow in the same tick.
+void tick() {
+  const int deliveriesBefore = g_dataDeliveries;
+  for (int i = 0; i < 60; ++i) {
+    frame();
+  }
+  if (g_dataDeliveries != deliveriesBefore + 1) {
+    fail("module requested aircraft data " + std::to_string(g_dataDeliveries - deliveriesBefore) +
+         " times in one second");
+  }
+}
+
+// Runs `seconds` ticks with the given aircraft state; g_commands collects what was sent.
 void fly(int seconds, bool onGround, double groundSpeedKts, double altitudeAglFt) {
   g_aircraft.onGround = onGround;
   g_aircraft.groundSpeedKts = groundSpeedKts;
   g_aircraft.altitudeAglFt = altitudeAglFt;
-  g_sentEvents.clear();
+  g_commands.clear();
   for (int i = 0; i < seconds; ++i) {
     tick();
   }
 }
 
-void expectEvents(const char* label, const std::vector<std::string>& expected) {
-  if (g_sentEvents == expected) {
+void takeOffAndClimb() {
+  fly(60, true, 15, 0);    // taxi
+  fly(30, true, 140, 0);   // take-off roll
+  fly(8, false, 160, 60);  // lift-off, below 100 ft AGL
+  fly(30, false, 250, 3000);
+}
+
+// --- Checks -------------------------------------------------------------------
+
+std::string join(const std::vector<std::string>& items) {
+  std::string text;
+  for (const auto& item : items) {
+    text += "\n       " + item;
+  }
+  return text;
+}
+
+void expectCommands(const char* label, const std::vector<std::string>& expected) {
+  if (g_commands == expected) {
     std::printf("ok   %s\n", label);
     return;
   }
-  std::string got;
-  for (const auto& e : g_sentEvents) {
-    got += e + " ";
-  }
-  std::string want;
-  for (const auto& e : expected) {
-    want += e + " ";
-  }
-  fail(std::string(label) + ": sent [" + got + "] expected [" + want + "]");
+  fail(std::string(label) + "\n     sent:" + join(g_commands) + "\n     expected:" + join(expected));
 }
 
-void expectLVar(const char* label, const char* name, double expected) {
-  if (g_lvars[name] == expected) {
+void expectValue(const char* label, double actual, double expected) {
+  if (actual == expected) {
     std::printf("ok   %s\n", label);
     return;
   }
-  fail(std::string(label) + ": " + name + " = " + std::to_string(g_lvars[name]) + ", expected " +
-       std::to_string(expected));
-}
-
-// Take-off from the ground and cruise long enough to arm the module.
-void takeOffAndCruise() {
-  fly(60, true, 15, 0);     // taxi
-  fly(30, true, 140, 0);    // take-off roll
-  fly(20, false, 160, 50);  // initial climb below 100 ft AGL does not count
-  fly(40, false, 250, 3000);
-}
-
-void setUpFbw(int ndMode, bool oansAvailable) {
-  g_aircraft.title = "FlyByWire A380X (A380-842)";
-  g_aircraft.atcModel = "TT:ATCCOM.AC_MODEL A380.0.text";
-  g_lvars["A32NX_OANS_AVAILABLE"] = oansAvailable ? 1 : 0;
-  for (const char* side : {"L", "R"}) {
-    g_lvars[std::string("A32NX_EFIS_") + side + "_ND_MODE"] = ndMode;
-    fbwHandleEvent(std::string("A32NX.FCU_EFIS_") + side + "_RANGE_SET", 5);  // 10 NM
-  }
+  fail(std::string(label) + ": " + std::to_string(actual) + ", expected " + std::to_string(expected));
 }
 
 }  // namespace
 
-// --- Fakes for the MSFS API used by the module ------------------------------
+// --- Fakes for the MSFS API used by the module ------------------------------------
 
 extern "C" {
 BOOL execute_calculator_code(PCSTRINGZ code, FLOAT64* fvalue, SINT32*, PCSTRINGZ*) {
   const std::string rpn = code;
-  char name[128];
-  int value = 0;
-  int consumed = 0;
-  if (std::sscanf(code, "(L:%127[A-Z0-9_])%n", name, &consumed) == 1 && rpn.size() == static_cast<size_t>(consumed)) {
+  static const std::regex readLVar("\\(L:([A-Za-z0-9_]+)\\)");
+  static const std::regex keyEvent("(\\d+) \\(>K:(A32NX\\.[A-Z0-9_]+)\\)");
+  static const std::regex writeLVar("(\\d+) \\(>L:([A-Za-z0-9_]+)\\)");
+  static const std::regex hEvent("\\(>H:([A-Za-z0-9_]+)\\)");
+  std::smatch match;
+
+  if (std::regex_match(rpn, match, readLVar)) {
     if (fvalue == nullptr) {
       fail("read without result pointer: " + rpn);
     } else {
-      *fvalue = g_lvars[name];
+      const auto it = g_lvars.find(match[1].str());
+      *fvalue = it != g_lvars.end() ? it->second : 0;
     }
     return 1;
   }
-  consumed = 0;
-  if (std::sscanf(code, "%d (>K:%127[A-Za-z0-9_.])%n", &value, name, &consumed) == 2 &&
-      rpn.size() == static_cast<size_t>(consumed)) {
-    g_sentEvents.push_back(std::string(name) + "=" + std::to_string(value));
-    fbwHandleEvent(name, value);
-    return 1;
+
+  // Everything else is a command to the aircraft: at most one per frame.
+  if (++g_commandsThisFrame > 1) {
+    fail("more than one command in one frame: " + rpn);
   }
-  fail("unsupported RPN: \"" + rpn + "\"");
-  return 0;
+  g_commands.push_back(rpn);
+  if (std::regex_match(rpn, match, keyEvent)) {
+    if (g_aircraft.type == Type::FbwA380x) {
+      fbwApplyEvent(match[2].str(), std::stoi(match[1].str()));
+    }
+  } else if (std::regex_match(rpn, match, writeLVar)) {
+    if (g_lvars.count(match[2].str()) == 0) {
+      fail("write to an L-var the aircraft does not have: " + rpn);
+    }
+    g_lvars[match[2].str()] = std::stoi(match[1].str());
+  } else if (std::regex_match(rpn, match, hEvent)) {
+    if (g_aircraft.type == Type::SynapticA220) {
+      a220ApplyEvent(match[1].str());
+    }
+  } else {
+    fail("unsupported RPN: \"" + rpn + "\"");
+  }
+  return 1;
+}
+ID check_named_variable(PCSTRINGZ name) {
+  return g_lvars.count(name) != 0 ? 1 : -1;
 }
 ID register_named_variable(PCSTRINGZ) {
   fail("register_named_variable is not expected");
@@ -208,6 +307,9 @@ HRESULT SimConnect_RequestDataOnSimObject(HANDLE, SIMCONNECT_DATA_REQUEST_ID, SI
   return S_OK;
 }
 HRESULT SimConnect_SubscribeToSystemEvent(HANDLE, SIMCONNECT_CLIENT_EVENT_ID eventId, const char* systemEventName) {
+  if (g_systemEvents.count(eventId) != 0) {
+    fail("event id used twice");
+  }
   g_systemEvents[eventId] = systemEventName;
   return S_OK;
 }
@@ -223,76 +325,198 @@ int main() {
     std::printf("FAIL module_init did not register a dispatch callback\n");
     return 1;
   }
+  for (int i = 0; i < 59; ++i) {
+    frame();  // phase: the next frame completes the first second
+  }
 
-  // Unsupported aircraft: never touches anything.
-  g_aircraft.title = "Asobo Cessna 172";
-  g_aircraft.atcModel = "C172";
-  takeOffAndCruise();
-  fly(3, true, 120, 0);
+  // --- Unsupported aircraft -----------------------------------------------------
+  loadAircraft(Type::Other, "Asobo Cessna 172", "SimObjects\\Airplanes\\Asobo_C172\\aircraft.cfg");
+  sendSystemEvent("AircraftLoaded");
+  takeOffAndClimb();
+  fly(3, true, 135, 0);
   fly(30, true, 20, 0);
-  expectEvents("unsupported aircraft is ignored", {});
+  expectCommands("unsupported aircraft: nothing is sent", {});
 
-  // FBW A380X, approach flown in ROSE ILS.
-  setUpFbw(0, true);
-  fly(60, true, 15, 0);
-  fly(30, true, 140, 0);
-  fly(20, false, 160, 50);
-  fly(40, false, 250, 3000);
-  expectEvents("FBW: nothing during taxi, take-off and flight", {});
-  fly(1, true, 140, 0);
-  expectEvents("FBW: first second on the ground is not yet a touchdown", {});
-  fly(1, true, 135, 0);
-  expectEvents("FBW: touchdown confirmed, still fast", {});
-  fly(3, true, 100, 0);
-  expectEvents("FBW: waiting while faster than 80 kt", {});
-  fly(1, true, 79, 0);
-  expectEvents("FBW: below 80 kt -> ROSE ILS switched to ARC",
-               {"A32NX.FCU_EFIS_L_MODE_SET=3", "A32NX.FCU_EFIS_R_MODE_SET=3"});
-  fly(1, true, 60, 0);
-  expectEvents("FBW: next second -> ZOOM 2 NM", {"A32NX.FCU_EFIS_L_RANGE_SET=3", "A32NX.FCU_EFIS_R_RANGE_SET=3"});
-  expectLVar("FBW: left ND shows the OANS at 2 NM", "A32NX_EFIS_L_OANS_RANGE", 3);
-  fly(120, true, 15, 0);
-  expectEvents("FBW: nothing more while taxiing in", {});
-
-  // Next flight, ND already in ARC: only the range is set, at the latest 15 s after touchdown.
-  takeOffAndCruise();
-  fly(2, true, 130, 0);
-  fly(15, true, 90, 0);
-  expectEvents("FBW: ARC approach, still faster than 80 kt after 15 s",
-               {"A32NX.FCU_EFIS_L_RANGE_SET=3", "A32NX.FCU_EFIS_R_RANGE_SET=3"});
-
-  // Bounce and touch-and-go do not count; the full stop landing afterwards does.
-  takeOffAndCruise();
+  // --- FlyByWire A380X ------------------------------------------------------------
+  setUpFbw(0, 5, true);  // ROSE ILS, 10 NM
+  sendSystemEvent("AircraftLoaded");
+  takeOffAndClimb();
+  expectCommands("FBW: nothing during taxi, take-off and climb", {});
+  fly(2, true, 140, 0);
+  expectCommands("FBW: 2 s on the ground is not yet the landing", {});
   fly(1, true, 130, 0);
-  fly(2, false, 130, 10);
-  fly(10, true, 120, 0);
-  fly(40, false, 150, 1500);
-  expectEvents("FBW: bounce and touch-and-go faster than 80 kt: nothing", {});
+  expectCommands("FBW: 3 s on the ground -> captain ND to ARC, ZOOM 2 NM",
+                 {"3 (>K:A32NX.FCU_EFIS_L_MODE_SET)", "3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)"});
+  fly(1, true, 120, 0);
+  expectCommands("FBW: one second later the first officer ND",
+                 {"3 (>K:A32NX.FCU_EFIS_R_MODE_SET)", "3 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
+  expectValue("FBW: left ND mode ARC", g_lvars["A32NX_EFIS_L_ND_MODE"], 3);
+  expectValue("FBW: left OANS range 2 NM", g_lvars["A32NX_EFIS_L_OANS_RANGE"], 3);
+  expectValue("FBW: right OANS range 2 NM", g_lvars["A32NX_EFIS_R_OANS_RANGE"], 3);
+  fly(120, true, 15, 0);
+  expectCommands("FBW: nothing more while taxiing in", {});
+
+  // BTV set up in PLAN with ZOOM 5 NM: only the mode changes, the pilot's zoom stays.
+  setUpFbw(4, 4, true);
+  takeOffAndClimb();
+  fly(5, true, 120, 0);
+  expectCommands("FBW: PLAN + ZOOM 5 NM -> ARC, zoom kept",
+                 {"3 (>K:A32NX.FCU_EFIS_L_MODE_SET)", "3 (>K:A32NX.FCU_EFIS_R_MODE_SET)"});
+  expectValue("FBW: left zoom still 5 NM", g_lvars["A32NX_EFIS_L_OANS_RANGE"], 4);
+
+  // ARC 20 NM: only the range changes.
+  setUpFbw(3, 6, true);
+  takeOffAndClimb();
+  fly(5, true, 120, 0);
+  expectCommands("FBW: ARC 20 NM -> ZOOM 2 NM",
+                 {"3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)", "3 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
+
+  // A bounce does not count; staying on the ground afterwards does.
+  setUpFbw(3, 5, true);
+  takeOffAndClimb();
+  fly(2, true, 135, 0);
+  fly(2, false, 130, 8);
   fly(2, true, 125, 0);
-  fly(4, true, 70, 0);
-  expectEvents("FBW: full stop landing -> ZOOM", {"A32NX.FCU_EFIS_L_RANGE_SET=3", "A32NX.FCU_EFIS_R_RANGE_SET=3"});
+  expectCommands("FBW: bounce -> nothing yet", {});
+  fly(1, true, 120, 0);
+  expectCommands("FBW: 3 s on the ground after the bounce -> ZOOM", {"3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)"});
 
-  // No Navigraph data: the OANS cannot be shown, nothing is changed.
-  setUpFbw(3, false);
-  takeOffAndCruise();
-  fly(2, true, 130, 0);
-  fly(10, true, 60, 0);
-  expectEvents("FBW: OANS not available -> hands off", {});
+  // No Navigraph data: the OANS cannot show anything, nothing is changed.
+  setUpFbw(0, 5, false);
+  takeOffAndClimb();
+  fly(10, true, 100, 0);
+  expectCommands("FBW: OANS not available -> hands off", {});
 
-  // Flight started in the air (e.g. on approach): arms after 30 s airborne.
-  g_aircraft.title = "Asobo Cessna 172";
-  fly(1, false, 150, 2000);
-  setUpFbw(3, true);
-  fly(35, false, 150, 2000);
-  fly(2, true, 130, 0);
-  fly(3, true, 60, 0);
-  expectEvents("FBW: flight started in the air", {"A32NX.FCU_EFIS_L_RANGE_SET=3", "A32NX.FCU_EFIS_R_RANGE_SET=3"});
+  // Rejected take-off and a short hop below 100 ft do not arm.
+  setUpFbw(0, 5, true);
+  fly(30, true, 100, 0);
+  fly(5, false, 140, 40);
+  fly(30, true, 60, 0);
+  expectCommands("FBW: rejected take-off -> nothing", {});
 
-  // Quitting in the air and starting a new flight at a gate must not count as a landing.
-  takeOffAndCruise();
+  // Flight started in the air, e.g. on final: arms after 15 s.
+  setUpFbw(3, 5, true);
+  sendSystemEvent("FlightLoaded");
+  fly(20, false, 150, 1500);
+  fly(4, true, 130, 0);
+  expectCommands("FBW: flight started on final",
+                 {"3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)", "3 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
+
+  // Moved to a gate while armed (no FlightLoaded event): no landing speed, nothing happens.
+  setUpFbw(0, 5, true);
+  takeOffAndClimb();
+  fly(30, true, 0, 0);
+  expectCommands("FBW: put on the ground at 0 kt -> nothing", {});
+  fly(60, true, 120, 0);
+  expectCommands("FBW: ... and it stays disarmed afterwards", {});
+
+  // Quitting in the air and starting a new flight at a gate is no landing.
+  setUpFbw(0, 5, true);
+  takeOffAndClimb();
   sendSystemEvent("FlightLoaded");
   fly(30, true, 0, 0);
-  expectEvents("FBW: new flight loaded at a gate after quitting in the air", {});
+  expectCommands("FBW: new flight loaded at a gate -> nothing", {});
+
+  // --- iniBuilds A350 -------------------------------------------------------------
+  setUpA350("Airbus A350-900 iniBuilds", 0, 5, false);  // LS, 10 NM
+  sendSystemEvent("AircraftLoaded");
+  takeOffAndClimb();
+  expectCommands("A350: nothing during taxi, take-off and climb", {});
+  fly(3, true, 130, 0);
+  expectCommands("A350: landing -> captain ND to ARC, ZOOM 2 NM",
+                 {"3 (>L:INI_MAP_MODE_CAPT_SWITCH)", "3 (>L:INI_MAP_RANGE_CAPT_SWITCH)"});
+  fly(1, true, 120, 0);
+  expectCommands("A350: first officer not yet (2 s apart)", {});
+  fly(1, true, 110, 0);
+  expectCommands("A350: first officer ND two seconds later",
+                 {"3 (>L:INI_MAP_MODE_FO_SWITCH)", "3 (>L:INI_MAP_RANGE_FO_SWITCH)"});
+  fly(120, true, 15, 0);
+  expectCommands("A350: nothing more while taxiing in", {});
+
+  // Range knob named as in iniBuilds' L-var list.
+  setUpA350("A350-1000", 3, 7, true);
+  takeOffAndClimb();
+  fly(6, true, 120, 0);
+  expectCommands("A350: INI_MAP_MODE_RANGE_*_SWITCH naming",
+                 {"3 (>L:INI_MAP_MODE_RANGE_CAPT_SWITCH)", "3 (>L:INI_MAP_MODE_RANGE_FO_SWITCH)"});
+
+  // The aircraft's own auto zoom (OIS option) already selected ZOOM: nothing to do.
+  setUpA350("A350-900", 3, 5, false);
+  takeOffAndClimb();
+  fly(2, true, 130, 0);
+  g_lvars["INI_MAP_RANGE_CAPT_SWITCH"] = 3;
+  g_lvars["INI_MAP_RANGE_FO_SWITCH"] = 3;
+  fly(5, true, 100, 0);
+  expectCommands("A350: map already shown by the aircraft -> nothing", {});
+
+  // Recognised by the aircraft.cfg path even if the title does not name it.
+  setUpA350("Lufthansa D-AIXA", 3, 5, false);
+  sendSystemEvent("AircraftLoaded");
+  takeOffAndClimb();
+  fly(3, true, 130, 0);
+  expectCommands("A350: recognised by its aircraft.cfg path", {"3 (>L:INI_MAP_RANGE_CAPT_SWITCH)"});
+
+  // Other iniBuilds aircraft use INI_MAP_RANGE_CAPT_SWITCH with another scale: never touched.
+  loadAircraft(Type::IniA320, "A320neo V2", "SimObjects\\Airplanes\\Asobo_A320_NEO\\aircraft.cfg");
+  g_lvars["INI_MAP_MODE_CAPT_SWITCH"] = 3;
+  g_lvars["INI_MAP_RANGE_CAPT_SWITCH"] = 0;
+  sendSystemEvent("AircraftLoaded");
+  takeOffAndClimb();
+  fly(30, true, 60, 0);
+  expectCommands("iniBuilds A320neo V2 with the same L-var names -> nothing", {});
+
+  // A user folder that happens to contain "a350" does not make another aircraft an A350.
+  loadAircraft(Type::IniA320, "A320neo V2",
+               "d:\\sim\\a350-stuff\\community\\inibuilds-a320\\simobjects\\airplanes\\a320neo\\aircraft.cfg");
+  g_lvars["INI_MAP_MODE_CAPT_SWITCH"] = 3;
+  g_lvars["INI_MAP_RANGE_CAPT_SWITCH"] = 0;
+  sendSystemEvent("AircraftLoaded");
+  takeOffAndClimb();
+  fly(30, true, 60, 0);
+  expectCommands("keyword in the user's install path is ignored", {});
+
+  // --- Synaptic A220 ---------------------------------------------------------------
+  loadAircraft(Type::SynapticA220, "A220-300",
+               "SimObjects\\Airplanes\\Synaptic_A220\\presets\\inibuilds\\A220-300\\config\\aircraft.cfg");
+  sendSystemEvent("AircraftLoaded");
+  g_a220Range[1] = 6;                                          // captain 10 NM
+  g_a220Range[2] = static_cast<int>(kA220Ranges.size()) - 1;  // first officer at the widest range
+  takeOffAndClimb();
+  expectCommands("A220: nothing during taxi, take-off and climb", {});
+  fly(4, true, 120, 0);
+  std::vector<std::string> expected;
+  for (int ctp = 1; ctp <= 2; ++ctp) {
+    for (int i = 0; i < 30; ++i) {
+      expected.push_back("(>H:A220_CTP_RANGE_" + std::to_string(ctp) + "_DEC)");
+    }
+    for (int i = 0; i < 3; ++i) {
+      expected.push_back("(>H:A220_CTP_RANGE_" + std::to_string(ctp) + "_INC)");
+    }
+  }
+  expectCommands("A220: both range knobs to the smallest range, then up to 1 NM", expected);
+  expectValue("A220: captain map at 1 NM", g_a220Range[1], 3);
+  expectValue("A220: first officer map at 1 NM", g_a220Range[2], 3);
+  fly(120, true, 15, 0);
+  expectCommands("A220: nothing more while taxiing in", {});
+
+  // Leaving the A220 while the knob sequence is still running stops it.
+  takeOffAndClimb();
+  fly(2, true, 120, 0);
+  g_commands.clear();
+  for (int i = 0; i < 6; ++i) {
+    frame();  // first frame: third second on the ground, the landing; then five detents
+  }
+  expectValue("A220: five detents sent in the first frames", static_cast<double>(g_commands.size()), 5);
+  loadAircraft(Type::Other, "Asobo Cessna 172", "SimObjects\\Airplanes\\Asobo_C172\\aircraft.cfg");
+  sendSystemEvent("AircraftLoaded");
+  g_commands.clear();
+  for (int i = 0; i < 54; ++i) {
+    frame();  // rest of that second
+  }
+  for (int i = 0; i < 5; ++i) {
+    tick();
+  }
+  expectCommands("A220: remaining detents are dropped when the aircraft changes", {});
 
   module_deinit();
 

@@ -15,3 +15,4 @@ typedef int BOOL;
 #define SUCCEEDED(hr) (((HRESULT)(hr)) >= 0)
 #define FAILED(hr) (((HRESULT)(hr)) < 0)
 #define CALLBACK
+#define MAX_PATH 260

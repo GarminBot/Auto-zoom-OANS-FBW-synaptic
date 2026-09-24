@@ -11,6 +11,7 @@ typedef const char* PCSTRINGZ;
 
 extern "C" {
 ID register_named_variable(PCSTRINGZ name);
+ID check_named_variable(PCSTRINGZ name);
 FLOAT64 get_named_variable_value(ID id);
 void set_named_variable_value(ID id, FLOAT64 value);
 BOOL execute_calculator_code(PCSTRINGZ code, FLOAT64* fvalue, SINT32* ivalue, PCSTRINGZ* svalue);

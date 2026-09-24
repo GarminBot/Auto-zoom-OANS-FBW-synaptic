@@ -62,6 +62,16 @@ struct SIMCONNECT_RECV_EVENT : public SIMCONNECT_RECV {
   DWORD dwData;
 };
 
+struct SIMCONNECT_RECV_EVENT_FILENAME : public SIMCONNECT_RECV_EVENT {
+  char szFileName[MAX_PATH];
+  DWORD dwFlags;
+};
+
+struct SIMCONNECT_RECV_EVENT_FRAME : public SIMCONNECT_RECV_EVENT {
+  float fFrameRate;
+  float fSimSpeed;
+};
+
 struct SIMCONNECT_RECV_EXCEPTION : public SIMCONNECT_RECV {
   DWORD dwException;
   DWORD dwSendID;
