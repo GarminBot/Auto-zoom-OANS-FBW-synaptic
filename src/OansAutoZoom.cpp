@@ -1,23 +1,23 @@
 // OANS Auto-Zoom: standalone WASM module for Microsoft Flight Simulator 2024.
 //
-// Automatically switches the OANS zoom of the FlyByWire A380X depending on
-// ground speed and restores the previous ND range after take-off.
-//
-// STARTER CODE: written against the MSFS SDK API but NOT yet tested in the
-// simulator. Background and sources: docs/fbw-a380x-oans-zoom.md
+// Shortly after landing it brings up the airport map (OANS) on both navigation
+// displays, zoomed in so that the airport and the own aircraft are clearly
+// visible, in aircraft that do not do this on their own.
 //
 // How it works:
-// - Once per second SimConnect delivers TITLE, SIM ON GROUND and GROUND VELOCITY.
-// - The current state of the EFIS control panel is read from the FBW L-vars.
-// - The zoom is changed exclusively through FBW's custom events
-//   A32NX.FCU_EFIS_{L,R}_RANGE_SET (value 0..11). Writing the L-vars directly
-//   has no effect because fbw.wasm overwrites them every frame.
-// - If the pilot turns the range knob, the automation of that side pauses
-//   until the next speed band is reached or the aircraft takes off.
+// - Every second the module requests TITLE, ATC MODEL, SIM ON GROUND,
+//   GROUND VELOCITY and PLANE ALT ABOVE GROUND through SimConnect.
+// - The loaded aircraft is recognised by its TITLE / ATC MODEL (see kProfiles).
+// - A landing is a touchdown after a real flight phase (see kLanding*). Once it
+//   is confirmed, the profile of the aircraft runs its steps, one per second.
+// - It acts once per landing and never again until the next flight, so the
+//   pilot keeps full control of the displays afterwards.
+//
+// Background and sources: docs/fbw-a380x-oans-zoom.md, docs/aircraft-profiles.md
 
+#include <MSFS/Legacy/gauges.h>
 #include <MSFS/MSFS.h>
 #include <MSFS/MSFS_WindowsTypes.h>
-#include <MSFS/Legacy/gauges.h>
 #include <SimConnect.h>
 
 #include <cstdio>
@@ -26,239 +26,199 @@
 namespace {
 
 // ---------------------------------------------------------------------------
-// Settings
+// Landing detection
 // ---------------------------------------------------------------------------
 
-// Only aircraft whose TITLE contains this text are handled
-// ("FlyByWire A380X (A380-842)", "FlyByWire A380X (A380-842) No Cabin").
-constexpr const char* kAircraftTitleFilter = "A380X";
+// The module only arms after the aircraft has been airborne this long, above this height.
+// This skips short hops, bounces on the take-off roll and flights that start on the ground.
+constexpr int kArmAfterAirborneTicks = 30;
+constexpr double kArmMinAltitudeAglFt = 100.0;
 
-// Control the captain side (L) and/or the first officer side (R).
-constexpr bool kControlLeftSide = true;
-constexpr bool kControlRightSide = true;
+// SIM ON GROUND must be true this many ticks (seconds) in a row to count as touchdown.
+constexpr int kTouchdownConfirmTicks = 2;
 
-// SIM ON GROUND must be stable for this many ticks (seconds) before it counts (touchdown bounces).
-constexpr int kGroundStateDebounceTicks = 3;
-
-// Ticks after which a sent command must be visible in the L-vars. The FCU applies it within
-// one frame, so any later mismatch means the pilot (or FBW itself) moved the knob.
-constexpr int kCommandSettleTicks = 1;
-
-// Positions of the A380X range selector (see docs/fbw-a380x-oans-zoom.md).
-constexpr int kPosZoom05Nm = 1;
-constexpr int kPosZoom1Nm = 2;
-constexpr int kPosZoom2Nm = 3;
-constexpr int kPosZoom5Nm = 4;
-constexpr int kPos10Nm = 5;
-
-// Ground speed bands -> zoom position. `upperKts` is the upper limit of the band.
-struct SpeedBand {
-  int position;
-  double upperKts;
-};
-constexpr SpeedBand kSpeedBands[] = {
-    {kPosZoom05Nm, 10.0},  // gate, slow taxi, tight turns
-    {kPosZoom1Nm, 25.0},   // normal taxi
-    {kPosZoom2Nm, 60.0},   // fast taxi, start of the take-off roll, end of the landing rollout
-    {kPosZoom5Nm, 1.0e9},  // take-off roll, landing rollout
-};
-constexpr int kSpeedBandCount = sizeof(kSpeedBands) / sizeof(kSpeedBands[0]);
-constexpr double kHysteresisKts = 2.0;
+// After the confirmed touchdown the OANS is brought up once the aircraft has slowed
+// below this ground speed, or at the latest after this many seconds.
+constexpr double kLandingTriggerGroundSpeedKts = 80.0;
+constexpr int kLandingTriggerMaxDelayTicks = 15;
 
 // ---------------------------------------------------------------------------
-// SimConnect IDs and data
+// Access to the aircraft: RPN (calculator code), like MobiFlight/HubHop presets
+// ---------------------------------------------------------------------------
+
+double readRpn(const char* code) {
+  FLOAT64 value = 0;
+  execute_calculator_code(code, &value, nullptr, nullptr);
+  return value;
+}
+
+void runRpn(const char* code) {
+  printf("[OansAutoZoom] %s\n", code);
+  execute_calculator_code(code, nullptr, nullptr, nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// Aircraft profiles
+// ---------------------------------------------------------------------------
+
+struct AircraftProfile {
+  const char* name;
+  // The aircraft matches if TITLE or ATC MODEL contains one of these texts (nullptr-terminated).
+  const char* const* keywords;
+  // Brings up the OANS. Called once per tick with step = 0, 1, 2, ... until it returns true.
+  bool (*showOans)(int step);
+};
+
+// --- FlyByWire A380X --------------------------------------------------------
+// ND mode L:A32NX_EFIS_{L,R}_ND_MODE: 0 ROSE ILS, 1 ROSE VOR, 2 ROSE NAV, 3 ARC, 4 PLAN.
+// The OANS is shown in ROSE NAV, ARC and PLAN when the range selector is on a ZOOM position.
+// Range selector positions for A32NX.FCU_EFIS_{L,R}_RANGE_SET: 0..4 = ZOOM 0.2/0.5/1/2/5 NM,
+// 5..11 = 10..640 NM. The L-vars are outputs of the FBW FCU, so only the events are used.
+constexpr int kFbwModeArc = 3;
+constexpr int kFbwZoomPosition = 3;  // ZOOM 2 NM
+
+bool fbwA380xShowOans(int step) {
+  static const char* const sides[] = {"L", "R"};
+  char code[128];
+
+  if (step == 0) {
+    if (readRpn("(L:A32NX_OANS_AVAILABLE)") < 0.5) {
+      printf("[OansAutoZoom] FBW A380X: OANS not available (Navigraph data or ARPT NAV reset), nothing to do\n");
+      return true;
+    }
+    // ROSE ILS / ROSE VOR cannot show the OANS: switch to ARC first. The FCU shifts the
+    // range position when the mode changes, so the range is set one tick later.
+    for (const char* side : sides) {
+      snprintf(code, sizeof(code), "(L:A32NX_EFIS_%s_ND_MODE)", side);
+      if (readRpn(code) < 2) {
+        snprintf(code, sizeof(code), "%d (>K:A32NX.FCU_EFIS_%s_MODE_SET)", kFbwModeArc, side);
+        runRpn(code);
+      }
+    }
+    return false;
+  }
+
+  for (const char* side : sides) {
+    snprintf(code, sizeof(code), "%d (>K:A32NX.FCU_EFIS_%s_RANGE_SET)", kFbwZoomPosition, side);
+    runRpn(code);
+  }
+  return true;
+}
+
+const char* const kFbwA380xKeywords[] = {"A380X", nullptr};
+
+const AircraftProfile kProfiles[] = {
+    {"FlyByWire A380X", kFbwA380xKeywords, fbwA380xShowOans},
+};
+
+const AircraftProfile* findProfile(const char* title, const char* atcModel) {
+  for (const AircraftProfile& profile : kProfiles) {
+    for (const char* const* keyword = profile.keywords; *keyword != nullptr; ++keyword) {
+      if (std::strstr(title, *keyword) != nullptr || std::strstr(atcModel, *keyword) != nullptr) {
+        return &profile;
+      }
+    }
+  }
+  return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// SimConnect
 // ---------------------------------------------------------------------------
 
 enum DataDefinitionId : SIMCONNECT_DATA_DEFINITION_ID { DEF_AIRCRAFT = 0 };
 enum DataRequestId : SIMCONNECT_DATA_REQUEST_ID { REQ_AIRCRAFT = 0 };
-enum ClientEventId : SIMCONNECT_CLIENT_EVENT_ID { EVT_RANGE_SET_L = 0, EVT_RANGE_SET_R = 1 };
+enum ClientEventId : SIMCONNECT_CLIENT_EVENT_ID { EVT_ONE_SECOND = 0 };
 
 // Order and types must match the SimConnect_AddToDataDefinition calls in module_init.
 struct AircraftData {
   char title[256];
+  char atcModel[256];
   double simOnGround;
   double groundVelocityKts;
+  double altitudeAglFt;
 };
 
-struct EfisSide {
-  const char* name;
-  SIMCONNECT_CLIENT_EVENT_ID rangeSetEvent;
-  const char* rangeSetEventName;
-  const char* ndRangeVarName;
-  const char* oansRangeVarName;
-  const char* ndModeVarName;
-  bool enabled;
-
-  ID ndRangeVar = -1;
-  ID oansRangeVar = -1;
-  ID ndModeVar = -1;
-
-  int speedBand = -1;           // current speed band, -1 = not determined yet
-  int lastSentPosition = -1;    // last position we sent, -1 = none
-  int lastSentTick = 0;
-  int positionBeforeZoom = -1;  // selector position before our first zoom, restored after take-off
-  bool zoomedByUs = false;
-  bool paused = false;          // pilot took over; wait for the next speed band
-  int pausedInBand = -1;
-};
-
-HANDLE g_simConnect = nullptr;
-int g_tick = 0;
-ID g_oansAvailableVar = -1;
-
-bool g_groundStateKnown = false;
-bool g_onGround = false;
-int g_groundStateCandidateTicks = 0;
-
-EfisSide g_sides[] = {
-    {"L", EVT_RANGE_SET_L, "A32NX.FCU_EFIS_L_RANGE_SET", "A32NX_EFIS_L_ND_RANGE", "A32NX_EFIS_L_OANS_RANGE",
-     "A32NX_EFIS_L_ND_MODE", kControlLeftSide},
-    {"R", EVT_RANGE_SET_R, "A32NX.FCU_EFIS_R_RANGE_SET", "A32NX_EFIS_R_ND_RANGE", "A32NX_EFIS_R_OANS_RANGE",
-     "A32NX_EFIS_R_ND_MODE", kControlRightSide},
-};
+HANDLE g_simConnect = 0;
 
 // ---------------------------------------------------------------------------
-// Logic
+// State machine
 // ---------------------------------------------------------------------------
 
-// Current selector position 0..11 derived from the FBW L-vars.
-// ND_RANGE: 0 = ZOOM, 1..7 = 10..640 NM. OANS_RANGE: 0..4 = zoom level, 5 = no zoom.
-int readSelectorPosition(const EfisSide& side) {
-  const int ndRange = static_cast<int>(get_named_variable_value(side.ndRangeVar));
-  const int oansRange = static_cast<int>(get_named_variable_value(side.oansRangeVar));
-  return ndRange == 0 ? oansRange : ndRange + 4;
-}
+const AircraftProfile* g_profile = nullptr;
+int g_airborneTicks = 0;
+int g_groundTicks = 0;
+bool g_armed = false;   // a real flight phase happened, the next landing counts
+bool g_landed = false;  // touchdown confirmed, waiting for the trigger
+int g_ticksSinceTouchdown = 0;
+bool g_running = false;  // profile steps in progress
+int g_step = 0;
+int g_exceptionLogCount = 0;
 
-// OANS is only shown in ROSE NAV (2), ARC (3) and PLAN (4).
-bool isOansCapableMode(int ndMode) {
-  return ndMode == 2 || ndMode == 3 || ndMode == 4;
-}
-
-int rawSpeedBand(double groundSpeedKts) {
-  int band = 0;
-  while (band < kSpeedBandCount - 1 && groundSpeedKts > kSpeedBands[band].upperKts) {
-    ++band;
-  }
-  return band;
-}
-
-// Speed band with hysteresis, so the map does not jump back and forth at a band limit.
-int nextSpeedBand(double groundSpeedKts, int currentBand) {
-  const int raw = rawSpeedBand(groundSpeedKts);
-  if (currentBand < 0 || raw == currentBand) {
-    return raw;
-  }
-  if (raw > currentBand) {
-    return groundSpeedKts > kSpeedBands[currentBand].upperKts + kHysteresisKts ? raw : currentBand;
-  }
-  return groundSpeedKts < kSpeedBands[currentBand - 1].upperKts - kHysteresisKts ? raw : currentBand;
-}
-
-void sendSelectorPosition(EfisSide& side, int position) {
-  const HRESULT hr = SimConnect_TransmitClientEvent(g_simConnect, SIMCONNECT_OBJECT_ID_USER, side.rangeSetEvent,
-                                                    static_cast<DWORD>(position), SIMCONNECT_GROUP_PRIORITY_HIGHEST,
-                                                    SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY);
-  if (FAILED(hr)) {
-    fprintf(stderr, "[OansAutoZoom] %s: sending %s failed\n", side.name, side.rangeSetEventName);
-    return;
-  }
-  side.lastSentPosition = position;
-  side.lastSentTick = g_tick;
-  printf("[OansAutoZoom] %s: range selector -> %d\n", side.name, position);
-}
-
-void forgetControl(EfisSide& side) {
-  side.speedBand = -1;
-  side.lastSentPosition = -1;
-  side.positionBeforeZoom = -1;
-  side.zoomedByUs = false;
-  side.paused = false;
-  side.pausedInBand = -1;
-}
-
-void updateSide(EfisSide& side, bool onGround, double groundSpeedKts) {
-  const int position = readSelectorPosition(side);
-  const bool lastCommandSettled = g_tick - side.lastSentTick >= kCommandSettleTicks;
-
-  // Manual input: our last command no longer matches although it had time to take effect.
-  if (side.lastSentPosition >= 0 && lastCommandSettled && position != side.lastSentPosition) {
-    printf("[OansAutoZoom] %s: manual input detected, pausing until the next speed band\n", side.name);
-    const int band = side.speedBand;
-    forgetControl(side);
-    side.paused = onGround;
-    side.pausedInBand = band;
-  }
-
-  if (!onGround) {
-    if (side.zoomedByUs && position < kPos10Nm) {
-      // After take-off: restore the range from before the zoom, once.
-      sendSelectorPosition(side, side.positionBeforeZoom >= kPos10Nm ? side.positionBeforeZoom : kPos10Nm);
-    } else if (lastCommandSettled) {
-      side.lastSentPosition = -1;
-    }
-    side.speedBand = -1;
-    side.positionBeforeZoom = -1;
-    side.zoomedByUs = false;
-    side.paused = false;
-    return;
-  }
-
-  // On the ground: only zoom with OANS available (power, Navigraph data) and ND in ROSE NAV, ARC or PLAN.
-  const int ndMode = static_cast<int>(get_named_variable_value(side.ndModeVar));
-  const bool oansAvailable = get_named_variable_value(g_oansAvailableVar) > 0.5;
-  if (!isOansCapableMode(ndMode) || !oansAvailable) {
-    forgetControl(side);
-    return;
-  }
-
-  side.speedBand = nextSpeedBand(groundSpeedKts, side.speedBand);
-  if (side.paused) {
-    if (side.speedBand == side.pausedInBand) {
-      return;
-    }
-    side.paused = false;
-  }
-
-  const int target = kSpeedBands[side.speedBand].position;
-  if (target == position) {
-    return;
-  }
-  if (!side.zoomedByUs) {
-    side.positionBeforeZoom = position;
-    side.zoomedByUs = true;
-  }
-  sendSelectorPosition(side, target);
-}
-
-void updateGroundState(bool rawOnGround) {
-  if (!g_groundStateKnown) {
-    g_onGround = rawOnGround;
-    g_groundStateKnown = true;
-    g_groundStateCandidateTicks = 0;
-  } else if (rawOnGround == g_onGround) {
-    g_groundStateCandidateTicks = 0;
-  } else if (++g_groundStateCandidateTicks >= kGroundStateDebounceTicks) {
-    g_onGround = rawOnGround;
-    g_groundStateCandidateTicks = 0;
-  }
+void resetFlightState() {
+  g_airborneTicks = 0;
+  g_groundTicks = 0;
+  g_armed = false;
+  g_landed = false;
+  g_ticksSinceTouchdown = 0;
+  g_running = false;
+  g_step = 0;
 }
 
 void onAircraftData(const AircraftData& data) {
-  ++g_tick;
-  if (std::strstr(data.title, kAircraftTitleFilter) == nullptr) {
-    // Different aircraft: start from scratch next time the A380X is loaded.
-    g_groundStateKnown = false;
-    for (EfisSide& side : g_sides) {
-      forgetControl(side);
+  const AircraftProfile* profile = findProfile(data.title, data.atcModel);
+  if (profile != g_profile) {
+    g_profile = profile;
+    resetFlightState();
+    printf("[OansAutoZoom] aircraft \"%s\": %s\n", data.title, profile != nullptr ? profile->name : "not supported");
+  }
+  if (g_profile == nullptr) {
+    return;
+  }
+
+  if (g_running) {
+    g_running = !g_profile->showOans(g_step++);
+    return;
+  }
+
+  const bool onGround = data.simOnGround > 0.5;
+  if (!onGround) {
+    g_groundTicks = 0;
+    g_landed = false;  // touch and go: wait for the next landing
+    if (data.altitudeAglFt > kArmMinAltitudeAglFt) {
+      ++g_airborneTicks;
+    }
+    if (!g_armed && g_airborneTicks >= kArmAfterAirborneTicks) {
+      g_armed = true;
+      printf("[OansAutoZoom] airborne: armed for the next landing\n");
     }
     return;
   }
 
-  updateGroundState(data.simOnGround > 0.5);
-  for (EfisSide& side : g_sides) {
-    if (side.enabled) {
-      updateSide(side, g_onGround, data.groundVelocityKts);
+  g_airborneTicks = 0;
+  if (!g_armed) {
+    return;
+  }
+
+  if (!g_landed) {
+    if (++g_groundTicks < kTouchdownConfirmTicks) {
+      return;
     }
+    g_landed = true;
+    g_ticksSinceTouchdown = g_groundTicks - 1;
+    printf("[OansAutoZoom] touchdown confirmed\n");
+  } else {
+    ++g_ticksSinceTouchdown;
+  }
+
+  if (data.groundVelocityKts <= kLandingTriggerGroundSpeedKts ||
+      g_ticksSinceTouchdown >= kLandingTriggerMaxDelayTicks) {
+    printf("[OansAutoZoom] %s: bringing up the OANS (%.0f kt, %d s after touchdown)\n", g_profile->name,
+           data.groundVelocityKts, g_ticksSinceTouchdown);
+    g_armed = false;
+    g_landed = false;
+    g_step = 0;
+    g_running = !g_profile->showOans(g_step++);
   }
 }
 
@@ -266,6 +226,15 @@ void CALLBACK dispatchProc(SIMCONNECT_RECV* pData, DWORD cbData, void* pContext)
   (void)cbData;
   (void)pContext;
   switch (pData->dwID) {
+    case SIMCONNECT_RECV_ID_EVENT: {
+      const auto* event = static_cast<SIMCONNECT_RECV_EVENT*>(pData);
+      if (event->uEventID == EVT_ONE_SECOND) {
+        // Requested anew every second, so it keeps working across flights and aircraft changes.
+        SimConnect_RequestDataOnSimObject(g_simConnect, REQ_AIRCRAFT, DEF_AIRCRAFT, SIMCONNECT_OBJECT_ID_USER,
+                                          SIMCONNECT_PERIOD_ONCE);
+      }
+      break;
+    }
     case SIMCONNECT_RECV_ID_SIMOBJECT_DATA: {
       const auto* objectData = static_cast<SIMCONNECT_RECV_SIMOBJECT_DATA*>(pData);
       if (objectData->dwRequestID == REQ_AIRCRAFT) {
@@ -274,10 +243,12 @@ void CALLBACK dispatchProc(SIMCONNECT_RECV* pData, DWORD cbData, void* pContext)
       break;
     }
     case SIMCONNECT_RECV_ID_EXCEPTION: {
-      const auto* exception = static_cast<SIMCONNECT_RECV_EXCEPTION*>(pData);
-      fprintf(stderr, "[OansAutoZoom] SimConnect exception %u (send id %u, index %u)\n",
-              static_cast<unsigned>(exception->dwException), static_cast<unsigned>(exception->dwSendID),
-              static_cast<unsigned>(exception->dwIndex));
+      // Expected while no flight is loaded (no user aircraft); only log the first few.
+      if (g_exceptionLogCount < 5) {
+        ++g_exceptionLogCount;
+        const auto* exception = static_cast<SIMCONNECT_RECV_EXCEPTION*>(pData);
+        printf("[OansAutoZoom] SimConnect exception %u\n", static_cast<unsigned>(exception->dwException));
+      }
       break;
     }
     default:
@@ -293,7 +264,7 @@ void CALLBACK dispatchProc(SIMCONNECT_RECV* pData, DWORD cbData, void* pContext)
 
 extern "C" MSFS_CALLBACK void module_init(void) {
   if (FAILED(SimConnect_Open(&g_simConnect, "OansAutoZoom", nullptr, 0, 0, 0))) {
-    fprintf(stderr, "[OansAutoZoom] SimConnect_Open failed\n");
+    printf("[OansAutoZoom] SimConnect_Open failed\n");
     return;
   }
 
@@ -305,21 +276,15 @@ extern "C" MSFS_CALLBACK void module_init(void) {
   };
 
   track(SimConnect_AddToDataDefinition(g_simConnect, DEF_AIRCRAFT, "TITLE", nullptr, SIMCONNECT_DATATYPE_STRING256));
+  track(SimConnect_AddToDataDefinition(g_simConnect, DEF_AIRCRAFT, "ATC MODEL", nullptr,
+                                       SIMCONNECT_DATATYPE_STRING256));
   track(SimConnect_AddToDataDefinition(g_simConnect, DEF_AIRCRAFT, "SIM ON GROUND", "Bool",
                                        SIMCONNECT_DATATYPE_FLOAT64));
   track(SimConnect_AddToDataDefinition(g_simConnect, DEF_AIRCRAFT, "GROUND VELOCITY", "Knots",
                                        SIMCONNECT_DATATYPE_FLOAT64));
-
-  for (EfisSide& side : g_sides) {
-    track(SimConnect_MapClientEventToSimEvent(g_simConnect, side.rangeSetEvent, side.rangeSetEventName));
-    side.ndRangeVar = register_named_variable(side.ndRangeVarName);
-    side.oansRangeVar = register_named_variable(side.oansRangeVarName);
-    side.ndModeVar = register_named_variable(side.ndModeVarName);
-  }
-  g_oansAvailableVar = register_named_variable("A32NX_OANS_AVAILABLE");
-
-  track(SimConnect_RequestDataOnSimObject(g_simConnect, REQ_AIRCRAFT, DEF_AIRCRAFT, SIMCONNECT_OBJECT_ID_USER,
-                                          SIMCONNECT_PERIOD_SECOND));
+  track(SimConnect_AddToDataDefinition(g_simConnect, DEF_AIRCRAFT, "PLANE ALT ABOVE GROUND", "Feet",
+                                       SIMCONNECT_DATATYPE_FLOAT64));
+  track(SimConnect_SubscribeToSystemEvent(g_simConnect, EVT_ONE_SECOND, "1sec"));
   // In a WASM module a single call is enough; afterwards the sim calls dispatchProc for every message.
   track(SimConnect_CallDispatch(g_simConnect, dispatchProc, nullptr));
 
@@ -327,8 +292,8 @@ extern "C" MSFS_CALLBACK void module_init(void) {
 }
 
 extern "C" MSFS_CALLBACK void module_deinit(void) {
-  if (g_simConnect != nullptr) {
+  if (g_simConnect != 0) {
     SimConnect_Close(g_simConnect);
-    g_simConnect = nullptr;
+    g_simConnect = 0;
   }
 }

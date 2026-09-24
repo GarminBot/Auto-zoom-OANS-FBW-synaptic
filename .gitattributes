@@ -1,0 +1,4 @@
+# The package files must reach the simulator byte for byte: layout.json lists their exact sizes.
+*.wasm binary
+manifest.json -text
+layout.json -text

@@ -56,6 +56,12 @@ struct SIMCONNECT_RECV {
   DWORD dwID;
 };
 
+struct SIMCONNECT_RECV_EVENT : public SIMCONNECT_RECV {
+  DWORD uGroupID;
+  DWORD uEventID;
+  DWORD dwData;
+};
+
 struct SIMCONNECT_RECV_EXCEPTION : public SIMCONNECT_RECV {
   DWORD dwException;
   DWORD dwSendID;
@@ -93,4 +99,6 @@ SIMCONNECTAPI SimConnect_MapClientEventToSimEvent(HANDLE hSimConnect, SIMCONNECT
 SIMCONNECTAPI SimConnect_TransmitClientEvent(HANDLE hSimConnect, SIMCONNECT_OBJECT_ID ObjectID,
                                              SIMCONNECT_CLIENT_EVENT_ID EventID, DWORD dwData,
                                              SIMCONNECT_NOTIFICATION_GROUP_ID GroupID, SIMCONNECT_EVENT_FLAG Flags);
+SIMCONNECTAPI SimConnect_SubscribeToSystemEvent(HANDLE hSimConnect, SIMCONNECT_CLIENT_EVENT_ID EventID,
+                                                const char* SystemEventName);
 SIMCONNECTAPI SimConnect_CallDispatch(HANDLE hSimConnect, DispatchProc pfcnDispatch, void* pContext);

@@ -3,8 +3,11 @@
 
 typedef unsigned long DWORD;
 typedef long HRESULT;
-typedef void* HANDLE;
-typedef void* HWND;
+typedef unsigned long long HANDLE;  // as in the MSFS SDK
+struct HWND__ {
+  int unused;
+};
+typedef struct HWND__* HWND;
 typedef const char* LPCSTR;
 typedef int BOOL;
 
