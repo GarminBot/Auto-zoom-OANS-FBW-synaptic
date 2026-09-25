@@ -10,11 +10,14 @@ with a 2 NM range“, FCOM).
 
 ## Unterstützte Flugzeuge
 
-| Flugzeug | Was nach der Landung passiert | Voraussetzung |
-| -------- | ----------------------------- | ------------- |
-| **FlyByWire A380X** | beide NDs: Modus ARC, Range ZOOM 2 NM (OANS) | Navigraph im flyPad verknüpft (sonst gibt es kein OANS, dann ändert das Addon nichts) |
-| **iniBuilds A350** | beide NDs: Modus ARC, Range ZOOM 2 NM (ANF), F/O-Seite 2 s nach dem Captain | Navigraph (für die ANF-Karten) |
-| **Synaptic A220** | beide MAP-Displays: Range 1 NM (Airport Moving Map) | **Synaptic A220 v1.0.10 oder neuer**, die erste Version mit Flughafenkarte (mit Navigraph vollständig, ohne nur Pisten), oder v1.0.9 mit einer Community-Mod für die Flughafenkarte. Ohne beides zeigt der A220 in diesem Bereich „AIRPORT MAP FAULT“. |
+| Flugzeug | Was nach der Landung passiert | Kartendaten für die Flughafenkarte |
+| -------- | ----------------------------- | ---------------------------------- |
+| **FlyByWire A380X** | beide NDs: Modus ARC, Range ZOOM 2 NM (OANS) | Navigraph oder [AMDB Bridge](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB) (Setup-Option „A350 and A380X“) |
+| **iniBuilds A350** | beide NDs: Modus ARC, Range ZOOM 2 NM (ANF), F/O-Seite 2 s nach dem Captain | Navigraph oder AMDB Bridge (Setup-Option „A350 and A380X“) |
+| **Synaptic A220** | beide MAP-Displays: Range 1 NM (Airport Moving Map) | Synaptic A220 **v1.0.10 oder neuer** (eigene Flughafenkarte) **oder** die A220-Karte von AMDB Bridge (Setup-Option „A220 moving map“, Paket `zzz-amdb-a220-amm`). Ohne beides zeigt der A220 in diesem Bereich „AIRPORT MAP FAULT“. |
+
+Mit AMDB Bridge: Starte AMDB Bridge **vor** dem Laden des Flugzeugs. Der FBW A380X fragt nur
+beim Laden nach, ob es Karten gibt.
 
 Hat eine Seite schon eine ZOOM-Stufe gewählt, bleibt diese. Andere Flugzeuge ignoriert das
 Addon komplett.
@@ -34,6 +37,10 @@ Addon komplett.
    kurz um, z. B. in `oans-autozoom`.
 4. Sim neu starten. Community-Pakete werden nur beim Start eingelesen.
 
+**Update von einer älteren Version:** Sim beenden, den alten Ordner im Community-Ordner
+löschen (der mit `manifest.json`, Titel „OANS Auto Zoom“) und den neuen hineinlegen. Nicht
+beide Versionen gleichzeitig drin lassen.
+
 ## So verhält es sich
 
 - **Scharf** schaltet es sich erst, wenn das Flugzeug mindestens 15 s höher als 100 ft über
@@ -48,26 +55,52 @@ Addon komplett.
 
 ## Fehlersuche
 
+- **Log-Datei:** Das Addon schreibt alles, was es tut, in `oans_autozoom.log` (bei jedem
+  Sim-Start neu):
+  - Microsoft Store / Xbox-App:
+    `%LOCALAPPDATA%\Packages\Microsoft.Limitless_8wekyb3d8bbwe\LocalState\WASM\MSFS2024\<Ordnername>\work\oans_autozoom.log`
+  - Steam: `%APPDATA%\Microsoft Flight Simulator 2024\WASM\MSFS2024\<Ordnername>\work\oans_autozoom.log`
+
+  `<Ordnername>` ist der Name des Addon-Ordners im Community-Ordner. So liest du das Log:
+
+  | Letzte Zeile im Log | Bedeutung |
+  | ------------------- | --------- |
+  | keine Datei | Das Modul wurde nicht geladen: Ordner falsch verschachtelt (`manifest.json` muss direkt im Ordner liegen) oder Paket deaktiviert |
+  | `initialised, waiting for an aircraft` | Modul läuft, aber noch kein Flug geladen |
+  | `aircraft "…": not supported` | Flugzeug nicht erkannt. Titel und Pfad stehen in der Zeile, bitte melden |
+  | `aircraft "…": FlyByWire A380X` (o. ä.) | Flugzeug erkannt, wartet auf den Abflug |
+  | `armed for the next landing` | in der Luft, wartet auf die Landung |
+  | `landing confirmed …` und `send …` | Landung erkannt, Befehle gesendet |
+  | `… after: …` | Stand der Displays 2 s danach (FBW, A350) |
+
 - **Es passiert gar nichts:** Prüfe unter *Marketplace → My Library*, ob das Paket
   „OANS Auto Zoom“ aktiviert ist. MSFS 2024 deaktiviert Community-Pakete manchmal von selbst.
-- **Log ansehen:** Im Entwicklermodus zeigt *Debug → Console* alle Meldungen mit dem
-  Präfix `[OansAutoZoom]`: welches Flugzeug erkannt wurde, wann es scharf geschaltet hat, wann
-  es die Landung erkannt hat und welche Befehle gesendet wurden.
-- **FBW A380X, Meldung „OANS not available“:** Das OANS braucht die Navigraph-Anbindung im
-  flyPad.
-- **A220 zeigt „AIRPORT MAP FAULT“:** Deine A220-Version hat noch keine Flughafenkarte. Update
-  auf v1.0.10 oder neuer (laut Synaptic für den 25.09.2026 angekündigt).
+  Im Entwicklermodus zeigt auch *Debug → Console* alle Meldungen (Präfix `[OansAutoZoom]`).
+- **FBW A380X, im Log `L:A32NX_OANS_AVAILABLE = 0`:** Das Addon stellt das ND trotzdem auf
+  ARC und ZOOM 2 NM, aber das OANS hatte beim Laden des Flugzeugs keine Kartendaten. Starte
+  AMDB Bridge (bzw. verknüpfe Navigraph) vor dem Laden des Flugzeugs.
+- **A220 zeigt „AIRPORT MAP FAULT“:** Es ist keine Flughafenkarte installiert: A220 v1.0.10
+  oder neuer, oder die A220-Karte von AMDB Bridge (und AMDB Bridge muss laufen).
 - **iniBuilds A350:** Der A350 hat eine eigene Option dafür („autozoom“ im OIS). Ist sie an,
   ist die Karte beim Auslösen schon da und das Addon lässt sie so. Beides zusammen stört sich
   nicht.
 
 ## Status
 
-Das Modul ist mit dem offiziellen MSFS 2024 SDK 1.7.3 gebaut, das zur aktuellen Retail-Version
-(Sim Update 6) gehört. Die Compiler-Optionen entsprechen dem offiziellen „MSFS2024“-Toolset.
-Die komplette Logik ist mit Host-Tests geprüft. Mangels Windows-Rechner mit MSFS ist es noch
-**nicht in einem laufenden Simulator getestet**. Welche Annahmen dabei offen sind, steht in
-[docs/aircraft-profiles.md](docs/aircraft-profiles.md).
+Version 1.1.0. Das Modul ist mit Compiler und Linker aus dem offiziellen MSFS 2024 SDK 1.7.3
+gebaut (`clang-cl.exe`, `wasm-ld.exe`), mit den Optionen des offiziellen
+„MSFS2024“-Visual-Studio-Toolsets. Die komplette Logik ist mit Host-Tests geprüft. Mangels
+Windows-Rechner mit MSFS ist es noch **nicht in einem laufenden Simulator getestet**. Welche
+Annahmen dabei offen sind, steht in [docs/aircraft-profiles.md](docs/aircraft-profiles.md).
+
+Änderungen in 1.1.0:
+
+- FBW A380X: Version 1.0.0 hat nur umgestellt, wenn FBW `L:A32NX_OANS_AVAILABLE` = 1 meldete.
+  Mit AMDB Bridge statt Navigraph kann der Wert 0 bleiben, dann passierte nichts. Jetzt wird
+  immer umgestellt.
+- A380X wird auch an seinem MSFS-2020-Ordnernamen erkannt.
+- Log-Datei `oans_autozoom.log` (siehe Fehlersuche).
+- Gebaut mit der offiziellen SDK-Toolchain statt mit einem freien clang.
 
 ## Aufbau des Repositorys
 
@@ -86,7 +119,9 @@ lädt der Simulator nicht.
 
 ## Selbst bauen
 
-Unter Linux oder WSL (braucht `clang`, `lld`, `python3`, `curl`, `unzip` und `msitools`):
+`tools/build.sh` ruft `clang-cl.exe` und `wasm-ld.exe` aus dem SDK auf: unter Windows (Git
+Bash) direkt, unter Linux mit Wine. Unter Linux braucht es `wine64`, `python3`, `curl`,
+`unzip` und `msitools`:
 
 ```sh
 tools/get-msfs-sdk.sh                    # lädt das offizielle MSFS 2024 SDK 1.7.3 von Microsoft
@@ -94,3 +129,5 @@ export MSFS_SDK="$PWD/.msfs-sdk/MSFS 2024 SDK"
 tools/build.sh                           # baut modules/oans_autozoom.wasm und layout.json
 tests/host/run.sh                        # Logik-Tests, brauchen nur einen C++-Compiler
 ```
+
+Unter Windows mit installiertem SDK: `MSFS_SDK="C:/MSFS 2024 SDK" tools/build.sh` in Git Bash.

@@ -39,7 +39,7 @@ Groß-/Kleinschreibung spielt keine Rolle.
 
 | Profil | Stichwort | Beispiele |
 | ------ | --------- | --------- |
-| FlyByWire A380X | `a380x` | Titel `FlyByWire A380X (A380-842)`, Ordner `SimObjects\AirPlanes\FlyByWire_A380X\…` |
+| FlyByWire A380X | `a380x`, `flybywire_a380` | Titel `FlyByWire A380X (A380-842)`, Ordner `SimObjects\AirPlanes\FlyByWire_A380X\…` (MSFS 2024) oder `…\FlyByWire_A380_842\…` (MSFS 2020) |
 | iniBuilds A350 | `a350` | Ordner `SimObjects\Airplanes\A350\presets\iniBuilds\A350-900\…` |
 | Synaptic A220 | `a220` | Titel `A220-300`, Ordner `SimObjects\Airplanes\Synaptic_A220\…` |
 
@@ -49,14 +49,17 @@ Details mit Quellstellen: [fbw-a380x-oans-zoom.md](fbw-a380x-oans-zoom.md).
 
 | Was | Wie | Quelle |
 | --- | --- | ------ |
-| OANS verfügbar? | `L:A32NX_OANS_AVAILABLE` = 1 (braucht Navigraph im flyPad) | FBW-Quellcode |
+| OANS hat Daten? | `L:A32NX_OANS_AVAILABLE` = 1 (Navigraph oder AMDB Bridge); wird nur geloggt | FBW-Quellcode |
 | ND-Modus lesen | `L:A32NX_EFIS_{L,R}_ND_MODE`: 0 ROSE ILS, 1 ROSE VOR, 2 ROSE NAV, 3 ARC, 4 PLAN | FBW-Quellcode |
 | ZOOM schon aktiv? | `L:A32NX_EFIS_{L,R}_ND_RANGE` = 0 | FBW-Quellcode |
 | ARC einstellen | `3 (>K:A32NX.FCU_EFIS_{L,R}_MODE_SET)` | FBW-Quellcode |
 | ZOOM 2 NM | `3 (>K:A32NX.FCU_EFIS_{L,R}_RANGE_SET)` (0–4 = ZOOM 0,2/0,5/1/2/5 NM) | FBW-Quellcode |
 
 Die L-Vars sind nur zum Lesen: FBW überschreibt sie in jedem Frame aus seiner FCU-Simulation.
-Ist das OANS nicht verfügbar, ändert das Addon nichts.
+Das Addon stellt die NDs auch um, wenn `L:A32NX_OANS_AVAILABLE` = 0 ist. FBW setzt den Wert nur
+beim Laden des Flugzeugs; lief der Kartenserver (Navigraph oder AMDB Bridge) da noch nicht,
+bleibt er `0`, obwohl die Karten später vielleicht kommen. Erkannt wird der A380X auch am Ordner
+`FlyByWire_A380_842` des MSFS-2020-Pakets, falls der Titel einer Lackierung „A380X“ nicht enthält.
 
 ## iniBuilds A350 — belegt
 
@@ -80,6 +83,9 @@ Ist das OANS nicht verfügbar, ändert das Addon nichts.
   schon auf ZOOM und das Addon lässt ihn so.
 - Beim ersten Laden einer Flughafenkarte kann der Sim laut iniBuilds bis zu 10 s einfrieren.
   Das ist normal.
+- **Kartendaten:** Navigraph oder AMDB Bridge. AMDB Bridge ändert dafür im A350-EFB nur die
+  Token-Übergabe an das OANS-Gauge; die L-Vars des EFIS-Panels bleiben dieselben.
+- Zwei Sekunden nach dem F/O liest das Addon beide Seiten zurück und schreibt sie ins Log.
 
 ## Synaptic A220 — belegt, eine Annahme
 
@@ -95,17 +101,23 @@ Ist das OANS nicht verfügbar, ändert das Addon nichts.
 - **Annahme:** Der Knopf bleibt am Ende stehen und springt nicht vom kleinsten auf den größten
   Bereich. So verhalten sich der echte Pro-Line-Fusion-Knopf und das MSFS Avionics Framework,
   auf dem die A220-Displays aufbauen. Im Sim nachgeprüft ist es nicht.
-- **Voraussetzung: Synaptic A220 v1.0.10 oder neuer.** Erst diese Version bringt die
-  Flughafenkarte mit („Full airport moving map with Navigraph nav data“, „Runways-only airport
-  moving map with native nav data“, [Changelog](https://docs.synapticsim.com/changelog),
-  angekündigt für den 25.09.2026). Bis v1.0.9 zeigt die MAP in diesen Bereichen
-  „AIRPORT MAP FAULT“.
+- **Voraussetzung: eine Flughafenkarte.** Synaptic bringt sie ab v1.0.10 selbst mit („Full
+  airport moving map with Navigraph nav data“, „Runways-only airport moving map with native nav
+  data“, [Changelog](https://docs.synapticsim.com/changelog), angekündigt für den 25.09.2026).
+  Bis v1.0.9 zeigt die MAP in diesen Bereichen „AIRPORT MAP FAULT“.
+- **Mit AMDB Bridge** (Paket `zzz-amdb-a220-amm`): Diese Karte legt sich laut ihrem Quellcode
+  genau auf das Display, das „AIRPORT MAP FAULT“ zeigt, und folgt dessen Range-Knopf
+  (1000/2000/3000 FT, 1 NM). Sie erscheint unter 100 ft und am Boden, solange
+  `L:AMDB_AMM_VISIBLE` auf 0 (automatisch) steht. Das Addon dreht den Knopf auf 1 NM, damit
+  erscheint auch diese Karte
+  ([`amdb-a220-amm.js`](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB/blob/main/packages/msfs-a220-amm/html_ui/Pages/VCockpit/Instruments/a22x/DisplayUnits/amdb-a220-amm.js)).
 - Der echte A220 zeigt die Karte nach der Landung nicht automatisch; das Addon ergänzt das
   bewusst, damit sich alle drei Flugzeuge gleich verhalten.
 
 ## Was sich nicht vorab prüfen ließ
 
-Das Addon wurde gegen das offizielle MSFS 2024 SDK 1.7.3 gebaut und seine Logik mit
-Host-Tests geprüft. In einem laufenden Simulator konnte es hier nicht getestet werden.
-Offen bleibt deshalb nur, was die Flugzeuge intern tun: vor allem die Annahme zum
-A220-Knopf und dass die A220-Karte mit v1.0.10 so kommt wie angekündigt.
+Das Addon wird mit Compiler und Linker aus dem offiziellen MSFS 2024 SDK 1.7.3 gebaut und
+seine Logik mit Host-Tests geprüft. In einem laufenden Simulator konnte es hier nicht getestet
+werden. Offen bleibt deshalb nur, was die Flugzeuge intern tun: vor allem die Annahme zum
+A220-Knopf und dass die A220-Karte mit v1.0.10 so kommt wie angekündigt. Was im Sim wirklich
+passiert, steht in `oans_autozoom.log` (siehe README, Fehlersuche).

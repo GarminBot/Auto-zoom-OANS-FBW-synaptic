@@ -63,9 +63,14 @@ Die Werte von `L:A32NX_EFIS_x_ND_MODE` sind `0` ROSE ILS, `1` ROSE VOR, `2` ROSE
 ([`A380FcuComputer_types.h` Z. 7–14](https://github.com/flybywiresim/aircraft/blob/2baa2b35eadaf4c78e172ce41bbe6b40b4aeafb2/fbw-a380x/src/wasm/fbw_a380/src/model/A380FcuComputer_types.h#L7-L14)).
 Den Modus stellst du mit `A32NX.FCU_EFIS_L_MODE_SET` (gleiche Werte) oder `…_MODE_INC/DEC` um.
 
-Außerdem braucht das OANS Kartendaten von Navigraph. `L:A32NX_OANS_AVAILABLE` wird nur `1`,
-wenn der Abruf der Navigraph-Flughafendatenbank klappt und der ARPT-NAV-Reset nicht gezogen ist
-([`OansControlPanel.tsx` Z. 102–106 und 335](https://github.com/flybywiresim/aircraft/blob/2baa2b35eadaf4c78e172ce41bbe6b40b4aeafb2/fbw-a380x/src/systems/instruments/src/ND/OansControlPanel.tsx#L102-L106)).
+Außerdem braucht das OANS Flughafendaten vom Kartenserver `amdb.api.navigraph.com`: von
+Navigraph selbst oder von [AMDB Bridge](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB),
+das diese Adresse auf den eigenen PC umleitet und kein Navigraph-Konto braucht.
+`L:A32NX_OANS_AVAILABLE` wird `1`, wenn die Flughafensuche beim Laden des Flugzeugs klappt und
+der ARPT-NAV-Reset nicht gezogen ist
+([`OansControlPanel.tsx` Z. 102–106, 277–288, 305 und 335](https://github.com/flybywiresim/aircraft/blob/2baa2b35eadaf4c78e172ce41bbe6b40b4aeafb2/fbw-a380x/src/systems/instruments/src/ND/OansControlPanel.tsx#L277-L305)).
+FBW sucht nur beim Laden und wenn sich das Navigraph-Token ändert. Lief der Kartenserver in
+diesem Moment nicht, bleibt der Wert für den ganzen Flug `0`.
 
 ## Warum direktes Schreiben der L-Vars nicht funktioniert
 
@@ -142,11 +147,15 @@ SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EVT_RANGE
 
 ## Was das Addon im A380X tut
 
-Nach der Landung, einmal pro Seite (F/O eine Sekunde nach dem Captain), und nur wenn
-`L:A32NX_OANS_AVAILABLE` = 1 ist:
+Nach der Landung, einmal pro Seite (F/O eine Sekunde nach dem Captain):
 
 1. ND-Modus nicht ARC → `3 (>K:A32NX.FCU_EFIS_x_MODE_SET)`
 2. keine ZOOM-Stufe gewählt (`L:A32NX_EFIS_x_ND_RANGE` ≠ 0) → `3 (>K:A32NX.FCU_EFIS_x_RANGE_SET)` (ZOOM 2 NM)
+
+`L:A32NX_OANS_AVAILABLE` wird nur ins Log geschrieben, nicht abgefragt: Version 1.0.0 hat bei `0`
+nichts getan, und so blieb im Test mit AMDB Bridge statt Navigraph das ND unverändert. Zwei
+Sekunden nach dem letzten Befehl liest das Addon `…_ND_MODE`, `…_ND_RANGE` und `…_OANS_RANGE`
+beider Seiten zurück und schreibt sie ins Log.
 
 Das entspricht dem echten A350 („At landing, the ND automatically displays the ANF in ARC mode,
 with a 2 NM range“). Zeitpunkt und Bedingungen: [aircraft-profiles.md](aircraft-profiles.md).

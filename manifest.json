@@ -4,7 +4,7 @@
   "title": "OANS Auto Zoom",
   "manufacturer": "",
   "creator": "GarminBot",
-  "package_version": "1.0.0",
+  "package_version": "1.1.0",
   "minimum_game_version": "1.7.27",
   "minimum_compatibility_version": "7.26.0.214",
   "export_type": "Community",
@@ -16,5 +16,5 @@
       "OlderHistory": ""
     }
   },
-  "total_package_size": "40026"
+  "total_package_size": "52269"
 }

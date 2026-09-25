@@ -6,8 +6,10 @@ set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 out="${TMPDIR:-/tmp}/oans-autozoom-host-test"
+log="$out.log"
 cxx="${CXX:-c++}"
 
 "$cxx" -std=c++17 -Wall -Wextra -Werror -I "$here/stubs" \
+  -DOANS_LOG_PATH="\"$log\"" \
   "$root/src/OansAutoZoom.cpp" "$here/scenario_test.cpp" -o "$out"
 "$out"

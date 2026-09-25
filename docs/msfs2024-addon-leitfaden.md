@@ -138,10 +138,17 @@ Die `layout.json` erzeugt entweder das SDK beim Bauen, ein Skript (hier
 - **APIs:** Neu sind `MSFS_Vars.h` (`fsVars…`) und `MSFS_Events.h` (`fsEvents…`). Die
   Legacy-API aus `gauges.h` (`execute_calculator_code`, `check_named_variable`, …) ist als
   „deprecated“ markiert, funktioniert aber weiter. Keine Exceptions, keine Threads, kein Win32.
-- **Ohne Visual Studio bauen:** clang/wasm-ld mit dem `wasi-sysroot` und den Headern aus dem
-  SDK, siehe [`tools/build.sh`](../tools/build.sh). Die Optionen stammen aus
-  `WASM\vs\2022\Microsoft.Cpp.MSFS.Common.targets` des SDK. `-mcpu=mvp -mbulk-memory` hält
-  moderne Compiler bei den WASM-Features, die auch die SDK-Bibliotheken benutzen.
+- **Ohne Visual Studio bauen:** `clang-cl.exe` und `wasm-ld.exe` aus `WASM\llvm\bin` des SDK
+  direkt aufrufen, unter Linux mit Wine, siehe [`tools/build.sh`](../tools/build.sh). Die
+  Optionen stammen aus `WASM\vs\2022\Microsoft.Cpp.MSFS.Common.targets` und dem
+  Release-Profil des SDK-Beispiels `StandaloneModule`. Nur dieser Linker (Asobos LLD 15)
+  kennt `--stack-guard-page`, das die Sektion `GuardPages` erzeugt; ein freies `wasm-ld`
+  kann das nicht. Eigene `.h`-Pfade des SDK als System-Header einbinden (`-isystem`), sonst
+  warnt der Compiler über `gauges.h`.
+- **Dateien:** Jedes Modul hat einen eigenen beschreibbaren Ordner, im Code `\work\…`. Auf der
+  Platte: `…\LocalState\WASM\MSFS2024\<Paketordner>\work` (Store) bzw.
+  `%APPDATA%\Microsoft Flight Simulator 2024\WASM\MSFS2024\<Paketordner>\work` (Steam).
+  Gut für eine Log-Datei, die Nutzer ohne Entwicklermodus finden.
 - **Kompilieren beim Nutzer:** Der Sim übersetzt `.wasm` aus Community-Paketen beim ersten Laden
   in nativen Code und cacht das Ergebnis. Ändert sich die Datei, übersetzt er neu.
 

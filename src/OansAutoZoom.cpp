@@ -17,6 +17,8 @@
 //   alone until the next flight; nothing happens on take-off.
 // - Commands are RPN (calculator code), the same mechanism MobiFlight/HubHop presets
 //   use. They are sent one per simulator frame, so no knob detent gets lost.
+// - Everything the module decides is written to the developer console and to
+//   oans_autozoom.log in the module's work folder (see kLogPath).
 //
 // Background and sources: docs/aircraft-profiles.md
 
@@ -29,7 +31,37 @@
 #include <cstdio>
 #include <cstring>
 
+// The module's private, writable folder. On disk (MSFS 2024, Microsoft Store):
+// %LOCALAPPDATA%\Packages\Microsoft.Limitless_8wekyb3d8bbwe\LocalState\WASM\MSFS2024\<package folder>\work
+// Steam: %APPDATA%\Microsoft Flight Simulator 2024\WASM\MSFS2024\<package folder>\work
+#ifndef OANS_LOG_PATH
+#define OANS_LOG_PATH "\\work\\oans_autozoom.log"
+#endif
+
 namespace {
+
+// ---------------------------------------------------------------------------
+// Log
+// ---------------------------------------------------------------------------
+
+constexpr const char* kVersion = "1.1.0";
+constexpr const char* kLogPath = OANS_LOG_PATH;
+double g_secondsSinceStart = 0;  // simulator time since the module was loaded, from the Frame event
+
+// One line to the developer console and to the log file. The file is started anew at every
+// simulator start and only gets a few lines per flight.
+void logLine(const char* format, ...) {
+  char line[640];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(line, sizeof(line), format, args);
+  va_end(args);
+  printf("[OansAutoZoom] %s\n", line);
+  if (FILE* file = fopen(kLogPath, "a")) {
+    fprintf(file, "[%8.1f s] %s\n", g_secondsSinceStart, line);
+    fclose(file);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Landing detection
@@ -62,7 +94,7 @@ int g_queueCount = 0;
 // Queues one RPN command; the queue is drained one command per simulator frame.
 void queueCommand(const char* format, ...) {
   if (g_queueCount == kQueueCapacity) {
-    printf("[OansAutoZoom] command queue full, dropping \"%s\"\n", format);
+    logLine("command queue full, dropping \"%s\"", format);
     return;
   }
   va_list args;
@@ -77,7 +109,7 @@ void sendNextQueuedCommand() {
     return;
   }
   const char* command = g_queue[g_queueHead];
-  printf("[OansAutoZoom] %s\n", command);
+  logLine("send %s", command);
   execute_calculator_code(command, nullptr, nullptr, nullptr);
   g_queueHead = (g_queueHead + 1) % kQueueCapacity;
   --g_queueCount;
@@ -107,8 +139,8 @@ bool lvarExists(const char* name) {
 
 struct AircraftProfile {
   const char* name;
-  // Matches if the TITLE or the aircraft.cfg path contains this text (case-insensitive).
-  const char* keyword;
+  // Matches if the TITLE or the aircraft.cfg path contains one of these texts (case-insensitive).
+  const char* keywords[2];
   // Brings up the map. Called once per second with step = 0, 1, 2, ... until it returns true.
   bool (*showAirportMap)(int step);
 };
@@ -122,6 +154,9 @@ struct AircraftProfile {
 // A32NX.FCU_EFIS_{L,R}_RANGE_SET: 0..4 = ZOOM 0.2/0.5/1/2/5 NM, 5..11 = 10..640 NM.
 // The L-vars are outputs of FBW's FCU simulation, so only its events are used to change them.
 // Entering ARC never moves a ZOOM position, so mode and range can be sent back to back.
+// The displays are switched whether or not the OANS has airport data: L:A32NX_OANS_AVAILABLE
+// only reflects the one airport search FBW makes when the aircraft loads, which fails when the
+// map server (Navigraph, or AMDB Bridge in its place) was not reachable at that moment.
 constexpr int kFbwModeArc = 3;
 constexpr int kFbwZoomPosition = 3;  // ZOOM 2 NM
 
@@ -137,17 +172,35 @@ void fbwQueueSide(const char* side) {
   }
 }
 
+void fbwLogSide(const char* when, const char* side) {
+  char mode[64];
+  char range[64];
+  char oansRange[64];
+  snprintf(mode, sizeof(mode), "A32NX_EFIS_%s_ND_MODE", side);
+  snprintf(range, sizeof(range), "A32NX_EFIS_%s_ND_RANGE", side);
+  snprintf(oansRange, sizeof(oansRange), "A32NX_EFIS_%s_OANS_RANGE", side);
+  logLine("FBW A380X %s: ND %s mode %.0f (3 = ARC), range %.0f (0 = ZOOM), zoom %.0f (3 = 2 NM)", when, side,
+          readLVar(mode), readLVar(range), readLVar(oansRange));
+}
+
 bool fbwA380xShowAirportMap(int step) {
-  if (step == 0) {
-    if (readLVar("A32NX_OANS_AVAILABLE") < 0.5) {
-      printf("[OansAutoZoom] FBW A380X: OANS not available (Navigraph or ARPT NAV reset), nothing to do\n");
+  switch (step) {
+    case 0:
+      logLine("FBW A380X: L:A32NX_OANS_AVAILABLE = %.0f", readLVar("A32NX_OANS_AVAILABLE"));
+      fbwLogSide("before", "L");
+      fbwLogSide("before", "R");
+      fbwQueueSide("L");
+      return false;
+    case 1:
+      fbwQueueSide("R");
+      return false;
+    case 2:
+      return false;
+    default:  // two seconds after the last command
+      fbwLogSide("after", "L");
+      fbwLogSide("after", "R");
       return true;
-    }
-    fbwQueueSide("L");
-    return false;
   }
-  fbwQueueSide("R");
-  return true;
 }
 
 // --- iniBuilds A350 ---------------------------------------------------------
@@ -161,18 +214,33 @@ bool fbwA380xShowAirportMap(int step) {
 constexpr int kA350ModeArc = 3;
 constexpr int kA350ZoomPosition = 3;  // ZOOM 2 NM
 
-void a350QueueSide(const char* side) {
-  char modeVar[64];
-  char rangeVar[64];
+// Looks up the names of the mode and range L-vars of one side; false if the aircraft has none.
+bool a350FindSideVars(const char* side, char (&modeVar)[64], char (&rangeVar)[64]) {
   snprintf(modeVar, sizeof(modeVar), "INI_MAP_MODE_%s_SWITCH", side);
   snprintf(rangeVar, sizeof(rangeVar), "INI_MAP_RANGE_%s_SWITCH", side);
   if (!lvarExists(rangeVar)) {
     snprintf(rangeVar, sizeof(rangeVar), "INI_MAP_MODE_RANGE_%s_SWITCH", side);
   }
-  if (!lvarExists(modeVar) || !lvarExists(rangeVar)) {
-    printf("[OansAutoZoom] iniBuilds A350: EFIS L-vars for %s not found, nothing to do\n", side);
+  return lvarExists(modeVar) && lvarExists(rangeVar);
+}
+
+void a350LogSide(const char* when, const char* side) {
+  char modeVar[64];
+  char rangeVar[64];
+  if (a350FindSideVars(side, modeVar, rangeVar)) {
+    logLine("iniBuilds A350 %s: %s = %.0f (3 = ARC), %s = %.0f (3 = ZOOM 2 NM)", when, modeVar, readLVar(modeVar),
+            rangeVar, readLVar(rangeVar));
+  }
+}
+
+void a350QueueSide(const char* side) {
+  char modeVar[64];
+  char rangeVar[64];
+  if (!a350FindSideVars(side, modeVar, rangeVar)) {
+    logLine("iniBuilds A350: EFIS L-vars for %s not found, nothing to do", side);
     return;
   }
+  a350LogSide("before", side);
   if (readLVar(modeVar) != kA350ModeArc) {
     queueCommand("%d (>L:%s)", kA350ModeArc, modeVar);
   }
@@ -184,15 +252,21 @@ void a350QueueSide(const char* side) {
 bool iniA350ShowAirportMap(int step) {
   // The first officer's side follows two seconds later: loading the map on both NDs at
   // the same moment has crashed the A350 in the past (fixed in v1.0.5).
-  if (step == 0) {
-    a350QueueSide("CAPT");
-    return false;
+  switch (step) {
+    case 0:
+      a350QueueSide("CAPT");
+      return false;
+    case 2:
+      a350QueueSide("FO");
+      return false;
+    case 1:
+    case 3:
+      return false;
+    default:  // two seconds after the last command
+      a350LogSide("after", "CAPT");
+      a350LogSide("after", "FO");
+      return true;
   }
-  if (step < 2) {
-    return false;
-  }
-  a350QueueSide("FO");
-  return true;
 }
 
 // --- Synaptic A220 ----------------------------------------------------------
@@ -223,10 +297,12 @@ bool synapticA220ShowAirportMap(int step) {
   return true;
 }
 
+// FBW A380X: title "FlyByWire A380X (A380-842)", folder FlyByWire_A380X (MSFS 2024 package) or
+// FlyByWire_A380_842 (MSFS 2020 package).
 const AircraftProfile kProfiles[] = {
-    {"FlyByWire A380X", "a380x", fbwA380xShowAirportMap},
-    {"iniBuilds A350", "a350", iniA350ShowAirportMap},
-    {"Synaptic A220", "a220", synapticA220ShowAirportMap},
+    {"FlyByWire A380X", {"a380x", "flybywire_a380"}, fbwA380xShowAirportMap},
+    {"iniBuilds A350", {"a350", nullptr}, iniA350ShowAirportMap},
+    {"Synaptic A220", {"a220", nullptr}, synapticA220ShowAirportMap},
 };
 
 // Case-insensitive search; keyword must be lower-case letters, digits or '_'.
@@ -249,8 +325,11 @@ const AircraftProfile* findProfile(const char* title, const char* aircraftPath) 
   const char* simObjects = findIgnoreCase(aircraftPath, "simobjects");
   const char* aircraftFolders = simObjects != nullptr ? simObjects : aircraftPath;
   for (const AircraftProfile& profile : kProfiles) {
-    if (findIgnoreCase(title, profile.keyword) != nullptr || findIgnoreCase(aircraftFolders, profile.keyword) != nullptr) {
-      return &profile;
+    for (const char* keyword : profile.keywords) {
+      if (keyword != nullptr &&
+          (findIgnoreCase(title, keyword) != nullptr || findIgnoreCase(aircraftFolders, keyword) != nullptr)) {
+        return &profile;
+      }
     }
   }
   return nullptr;
@@ -285,6 +364,7 @@ float g_secondsSinceDataRequest = 0;
 // ---------------------------------------------------------------------------
 
 const AircraftProfile* g_profile = nullptr;
+bool g_aircraftLogged = false;  // the recognised aircraft has been written to the log
 int g_airborneTicks = 0;
 int g_groundTicks = 0;
 bool g_armed = false;    // a real flight phase happened, the next landing counts
@@ -306,7 +386,12 @@ void onAircraftData(const AircraftData& data) {
   if (profile != g_profile) {
     g_profile = profile;
     resetFlightState();
-    printf("[OansAutoZoom] aircraft \"%s\": %s\n", data.title, profile != nullptr ? profile->name : "not supported");
+    g_aircraftLogged = false;
+  }
+  if (!g_aircraftLogged) {
+    g_aircraftLogged = true;
+    logLine("aircraft \"%s\" (%s): %s", data.title, g_aircraftPath,
+            profile != nullptr ? profile->name : "not supported, the module stays idle");
   }
   if (g_profile == nullptr) {
     return;
@@ -325,7 +410,7 @@ void onAircraftData(const AircraftData& data) {
     }
     if (!g_armed && g_airborneTicks >= kArmAfterAirborneTicks) {
       g_armed = true;
-      printf("[OansAutoZoom] airborne: armed for the next landing\n");
+      logLine("airborne at %.0f ft AGL: armed for the next landing", data.altitudeAglFt);
     }
     return;
   }
@@ -334,17 +419,20 @@ void onAircraftData(const AircraftData& data) {
   if (!g_armed) {
     return;
   }
-  if (++g_groundTicks == 1 && data.groundVelocityKts < kMinTouchdownGroundSpeedKts) {
-    printf("[OansAutoZoom] on the ground at %.0f kt: not a landing, disarmed\n", data.groundVelocityKts);
-    g_armed = false;
-    return;
+  if (++g_groundTicks == 1) {
+    if (data.groundVelocityKts < kMinTouchdownGroundSpeedKts) {
+      logLine("on the ground at %.0f kt: not a landing, disarmed", data.groundVelocityKts);
+      g_armed = false;
+      return;
+    }
+    logLine("touchdown at %.0f kt", data.groundVelocityKts);
   }
   if (g_groundTicks < kTouchdownConfirmTicks) {
     return;
   }
 
-  printf("[OansAutoZoom] %s: landing at %.0f kt, bringing up the airport map\n", g_profile->name,
-         data.groundVelocityKts);
+  logLine("%s: landing confirmed at %.0f kt, bringing up the airport map", g_profile->name,
+          data.groundVelocityKts);
   g_armed = false;
   g_step = 0;
   g_running = !g_profile->showAirportMap(g_step++);
@@ -357,7 +445,11 @@ void CALLBACK dispatchProc(SIMCONNECT_RECV* pData, DWORD cbData, void* pContext)
     case SIMCONNECT_RECV_ID_EVENT_FRAME: {
       const auto* frame = static_cast<SIMCONNECT_RECV_EVENT_FRAME*>(pData);
       sendNextQueuedCommand();
-      g_secondsSinceDataRequest += frame->fFrameRate > 1.0f ? 1.0f / frame->fFrameRate : 1.0f;
+      // A frame rate outside 5..1000 fps can only be a bogus value; 30 fps keeps the clock going.
+      const float frameRate = frame->fFrameRate;
+      const float frameSeconds = frameRate >= 5.0f && frameRate <= 1000.0f ? 1.0f / frameRate : 1.0f / 30.0f;
+      g_secondsSinceStart += frameSeconds;
+      g_secondsSinceDataRequest += frameSeconds;
       if (g_secondsSinceDataRequest >= 0.999f) {
         g_secondsSinceDataRequest = 0;
         // Requested anew every second, so it keeps working across flights and aircraft changes.
@@ -371,12 +463,15 @@ void CALLBACK dispatchProc(SIMCONNECT_RECV* pData, DWORD cbData, void* pContext)
       const auto* event = static_cast<SIMCONNECT_RECV_EVENT_FILENAME*>(pData);
       if (event->uEventID == EVT_AIRCRAFT_LOADED) {
         snprintf(g_aircraftPath, sizeof(g_aircraftPath), "%s", event->szFileName);
-        printf("[OansAutoZoom] aircraft loaded: %s\n", g_aircraftPath);
+        logLine("aircraft loaded: %s", g_aircraftPath);
+      } else if (event->uEventID == EVT_FLIGHT_LOADED) {
+        logLine("flight loaded: %s", event->szFileName);
       }
       if (event->uEventID == EVT_AIRCRAFT_LOADED || event->uEventID == EVT_FLIGHT_LOADED) {
         // A new aircraft or flight starts from scratch, e.g. at a gate after quitting the last
         // flight in the air; commands still queued for the previous aircraft are dropped.
         g_profile = nullptr;
+        g_aircraftLogged = false;
         resetFlightState();
       }
       break;
@@ -393,7 +488,7 @@ void CALLBACK dispatchProc(SIMCONNECT_RECV* pData, DWORD cbData, void* pContext)
       if (g_exceptionLogCount < 5) {
         ++g_exceptionLogCount;
         const auto* exception = static_cast<SIMCONNECT_RECV_EXCEPTION*>(pData);
-        printf("[OansAutoZoom] SimConnect exception %u\n", static_cast<unsigned>(exception->dwException));
+        logLine("SimConnect exception %u", static_cast<unsigned>(exception->dwException));
       }
       break;
     }
@@ -409,8 +504,13 @@ void CALLBACK dispatchProc(SIMCONNECT_RECV* pData, DWORD cbData, void* pContext)
 // ---------------------------------------------------------------------------
 
 extern "C" MSFS_CALLBACK void module_init(void) {
+  // Start a fresh log file for this simulator session.
+  if (FILE* file = fopen(kLogPath, "w")) {
+    fclose(file);
+  }
+  logLine("OANS Auto Zoom %s started", kVersion);
   if (FAILED(SimConnect_Open(&g_simConnect, "OansAutoZoom", nullptr, 0, 0, 0))) {
-    printf("[OansAutoZoom] SimConnect_Open failed\n");
+    logLine("SimConnect_Open failed");
     return;
   }
 
@@ -434,7 +534,7 @@ extern "C" MSFS_CALLBACK void module_init(void) {
   // In a WASM module a single call is enough; afterwards the sim calls dispatchProc for every message.
   track(SimConnect_CallDispatch(g_simConnect, dispatchProc, nullptr));
 
-  printf("[OansAutoZoom] %s\n", SUCCEEDED(result) ? "initialised" : "initialisation incomplete");
+  logLine("%s", SUCCEEDED(result) ? "initialised, waiting for an aircraft" : "initialisation incomplete");
 }
 
 extern "C" MSFS_CALLBACK void module_deinit(void) {

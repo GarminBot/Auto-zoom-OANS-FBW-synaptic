@@ -13,10 +13,16 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <regex>
+#include <sstream>
 #include <string>
 #include <vector>
+
+#ifndef OANS_LOG_PATH
+#error "Build with tests/host/run.sh, it sets OANS_LOG_PATH for the module and the test"
+#endif
 
 extern "C" void module_init(void);
 extern "C" void module_deinit(void);
@@ -86,9 +92,12 @@ void loadAircraft(Type type, const std::string& title, const std::string& path) 
   g_lvars.clear();
 }
 
-void setUpFbw(int ndMode, int rangePosition, bool oansAvailable) {
-  loadAircraft(Type::FbwA380x, "FlyByWire A380X (A380-842)",
-               "SimObjects\\AirPlanes\\FlyByWire_A380X\\presets\\flybywire\\FlyByWire_A380_842\\config\\aircraft.cfg");
+void setUpFbw(int ndMode, int rangePosition, bool oansAvailable,
+              const std::string& title = "FlyByWire A380X (A380-842)",
+              const std::string& path =
+                  "SimObjects\\AirPlanes\\FlyByWire_A380X\\presets\\flybywire\\FlyByWire_A380_842\\config\\"
+                  "aircraft.cfg") {
+  loadAircraft(Type::FbwA380x, title, path);
   g_lvars["A32NX_OANS_AVAILABLE"] = oansAvailable ? 1 : 0;
   for (const char* side : {"L", "R"}) {
     fbwApplyEvent(std::string("A32NX.FCU_EFIS_") + side + "_MODE_SET", ndMode);
@@ -112,6 +121,7 @@ DispatchProc g_dispatch = nullptr;
 std::map<SIMCONNECT_CLIENT_EVENT_ID, std::string> g_systemEvents;
 bool g_dataRequested = false;
 int g_commandsThisFrame = 0;
+float g_frameRate = 60.0f;  // what the Frame event reports
 
 void sendSystemEvent(const char* systemEventName) {
   for (const auto& [id, name] : g_systemEvents) {
@@ -157,7 +167,7 @@ void frame() {
       SIMCONNECT_RECV_EVENT_FRAME event{};
       event.dwID = SIMCONNECT_RECV_ID_EVENT_FRAME;
       event.uEventID = id;
-      event.fFrameRate = 60.0f;
+      event.fFrameRate = g_frameRate;
       event.fSimSpeed = 1.0f;
       g_dispatch(&event, sizeof(event), nullptr);
     }
@@ -224,6 +234,21 @@ void expectValue(const char* label, double actual, double expected) {
     return;
   }
   fail(std::string(label) + ": " + std::to_string(actual) + ", expected " + std::to_string(expected));
+}
+
+std::string readLog() {
+  std::ifstream file(OANS_LOG_PATH);
+  std::stringstream text;
+  text << file.rdbuf();
+  return text.str();
+}
+
+void expectLogContains(const char* label, const std::string& log, const std::string& expected) {
+  if (log.find(expected) != std::string::npos) {
+    std::printf("ok   %s\n", label);
+    return;
+  }
+  fail(std::string(label) + ": log does not contain \"" + expected + "\"");
 }
 
 }  // namespace
@@ -355,6 +380,32 @@ int main() {
   expectValue("FBW: right OANS range 2 NM", g_lvars["A32NX_EFIS_R_OANS_RANGE"], 3);
   fly(120, true, 15, 0);
   expectCommands("FBW: nothing more while taxiing in", {});
+  {
+    const std::string log = readLog();
+    expectLogContains("log: module start", log, "OANS Auto Zoom 1.1.0 started");
+    expectLogContains("log: unsupported aircraft", log, "\"Asobo Cessna 172\"");
+    expectLogContains("log: aircraft recognised", log,
+                      "aircraft \"FlyByWire A380X (A380-842)\" (SimObjects\\AirPlanes\\FlyByWire_A380X\\presets"
+                      "\\flybywire\\FlyByWire_A380_842\\config\\aircraft.cfg): FlyByWire A380X");
+    expectLogContains("log: armed", log, "armed for the next landing");
+    expectLogContains("log: touchdown", log, "touchdown at 140 kt");
+    expectLogContains("log: landing", log, "FlyByWire A380X: landing confirmed at 130 kt");
+    expectLogContains("log: OANS availability", log, "L:A32NX_OANS_AVAILABLE = 1");
+    expectLogContains("log: command", log, "send 3 (>K:A32NX.FCU_EFIS_L_MODE_SET)");
+    expectLogContains("log: displays before", log,
+                      "FBW A380X before: ND L mode 0 (3 = ARC), range 1 (0 = ZOOM), zoom 5 (3 = 2 NM)");
+    expectLogContains("log: displays after", log,
+                      "FBW A380X after: ND R mode 3 (3 = ARC), range 0 (0 = ZOOM), zoom 3 (3 = 2 NM)");
+  }
+
+  // Recognised by the MSFS 2020 package folder even if the livery title does not name it.
+  setUpFbw(0, 5, true, "Emirates A6-EUA", "SimObjects\\AirPlanes\\FlyByWire_A380_842\\aircraft.cfg");
+  sendSystemEvent("AircraftLoaded");
+  takeOffAndClimb();
+  fly(3, true, 130, 0);
+  expectCommands("FBW: recognised by the FlyByWire_A380_842 folder",
+                 {"3 (>K:A32NX.FCU_EFIS_L_MODE_SET)", "3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)"});
+  fly(10, true, 60, 0);
 
   // BTV set up in PLAN with ZOOM 5 NM: only the mode changes, the pilot's zoom stays.
   setUpFbw(4, 4, true);
@@ -380,12 +431,17 @@ int main() {
   expectCommands("FBW: bounce -> nothing yet", {});
   fly(1, true, 120, 0);
   expectCommands("FBW: 3 s on the ground after the bounce -> ZOOM", {"3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)"});
+  fly(10, true, 60, 0);  // first officer side and read-back
 
-  // No Navigraph data: the OANS cannot show anything, nothing is changed.
+  // L:A32NX_OANS_AVAILABLE = 0 (the airport search at aircraft load failed, e.g. AMDB Bridge
+  // was not running yet): the displays are switched all the same.
   setUpFbw(0, 5, false);
   takeOffAndClimb();
   fly(10, true, 100, 0);
-  expectCommands("FBW: OANS not available -> hands off", {});
+  expectCommands("FBW: L:A32NX_OANS_AVAILABLE = 0 -> switched anyway",
+                 {"3 (>K:A32NX.FCU_EFIS_L_MODE_SET)", "3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)",
+                  "3 (>K:A32NX.FCU_EFIS_R_MODE_SET)", "3 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
+  expectLogContains("log: OANS not available is reported", readLog(), "L:A32NX_OANS_AVAILABLE = 0");
 
   // Rejected take-off and a short hop below 100 ft do not arm.
   setUpFbw(0, 5, true);
@@ -517,6 +573,22 @@ int main() {
     tick();
   }
   expectCommands("A220: remaining detents are dropped when the aircraft changes", {});
+
+  // A bogus frame rate in the Frame event must not stop the once-per-second clock.
+  for (const float bogus : {0.0f, -1.0f, 1e9f}) {
+    g_frameRate = bogus;
+    const int deliveriesBefore = g_dataDeliveries;
+    for (int i = 0; i < 90; ++i) {
+      frame();
+    }
+    const int deliveries = g_dataDeliveries - deliveriesBefore;
+    if (deliveries < 2 || deliveries > 4) {
+      fail("frame rate " + std::to_string(bogus) + ": " + std::to_string(deliveries) +
+           " data requests in 90 frames, expected about 3");
+    } else {
+      std::printf("ok   frame rate %g: data still requested about once per 30 frames\n", bogus);
+    }
+  }
 
   module_deinit();
 
