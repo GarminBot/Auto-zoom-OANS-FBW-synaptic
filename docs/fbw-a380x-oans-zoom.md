@@ -150,12 +150,20 @@ SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EVT_RANGE
 Nach der Landung, einmal pro Seite (F/O eine Sekunde nach dem Captain):
 
 1. ND-Modus nicht ARC → `3 (>K:A32NX.FCU_EFIS_x_MODE_SET)`
-2. keine ZOOM-Stufe gewählt (`L:A32NX_EFIS_x_ND_RANGE` ≠ 0) → `3 (>K:A32NX.FCU_EFIS_x_RANGE_SET)` (ZOOM 2 NM)
+2. keine ZOOM-Stufe oder eine weitere als 0,5 NM gewählt (`L:A32NX_EFIS_x_OANS_RANGE` > 1, oder
+   `L:A32NX_EFIS_x_ND_RANGE` ≠ 0) → `1 (>K:A32NX.FCU_EFIS_x_RANGE_SET)` (ZOOM 0,5 NM)
 
 `L:A32NX_OANS_AVAILABLE` wird nur ins Log geschrieben, nicht abgefragt: Version 1.0.0 hat bei `0`
 nichts getan, und so blieb im Test mit AMDB Bridge statt Navigraph das ND unverändert. Zwei
 Sekunden nach dem letzten Befehl liest das Addon `…_ND_MODE`, `…_ND_RANGE` und `…_OANS_RANGE`
 beider Seiten zurück und schreibt sie ins Log.
 
-Das entspricht dem echten A350 („At landing, the ND automatically displays the ANF in ARC mode,
-with a 2 NM range“). Zeitpunkt und Bedingungen: [aircraft-profiles.md](aircraft-profiles.md).
+Vorbild ist der echte A350 („At landing, the ND automatically displays the ANF in ARC mode,
+with a 2 NM range“). Im Sim-Test mit dem A380X waren 2 NM zwei Rasten zu weit, deshalb stellt
+das Addon hier 0,5 NM ein (Version 1.2.0). `FCU_EFIS_x_RANGE_SET` wirkt bei jeder Landung
+erneut: FBW setzt den Eingang in jedem Frame vor dem Einlesen auf -1 zurück
+([`FlyByWireInterface.cpp` Z. 981](https://github.com/flybywiresim/aircraft/blob/2baa2b35eadaf4c78e172ce41bbe6b40b4aeafb2/fbw-a380x/src/wasm/fbw_a380/src/FlyByWireInterface.cpp#L981),
+[`SimConnectInterface.cpp` Z. 1577–1582](https://github.com/flybywiresim/aircraft/blob/2baa2b35eadaf4c78e172ce41bbe6b40b4aeafb2/fbw-a380x/src/wasm/fbw_a380/src/interface/SimConnectInterface.cpp#L1577-L1582)),
+und die FCU übernimmt ihn nur, wenn er nicht -1 ist
+([`A380FcuComputer.cpp` Z. 2214–2216](https://github.com/flybywiresim/aircraft/blob/2baa2b35eadaf4c78e172ce41bbe6b40b4aeafb2/fbw-a380x/src/wasm/fbw_a380/src/model/A380FcuComputer.cpp#L2214-L2216)).
+Zeitpunkt und Bedingungen: [aircraft-profiles.md](aircraft-profiles.md).

@@ -44,7 +44,7 @@ namespace {
 // Log
 // ---------------------------------------------------------------------------
 
-constexpr const char* kVersion = "1.1.0";
+constexpr const char* kVersion = "1.2.0";
 constexpr const char* kLogPath = OANS_LOG_PATH;
 double g_secondsSinceStart = 0;  // simulator time since the module was loaded, from the Frame event
 
@@ -150,15 +150,26 @@ struct AircraftProfile {
 
 // --- FlyByWire A380X --------------------------------------------------------
 // See docs/fbw-a380x-oans-zoom.md. ND mode L:A32NX_EFIS_{L,R}_ND_MODE: 0 ROSE ILS, 1 ROSE VOR,
-// 2 ROSE NAV, 3 ARC, 4 PLAN. Range L:A32NX_EFIS_{L,R}_ND_RANGE: 0 = ZOOM, 1..7 = 10..640 NM.
-// A32NX.FCU_EFIS_{L,R}_RANGE_SET: 0..4 = ZOOM 0.2/0.5/1/2/5 NM, 5..11 = 10..640 NM.
+// 2 ROSE NAV, 3 ARC, 4 PLAN. Zoom L:A32NX_EFIS_{L,R}_OANS_RANGE: 0..4 = ZOOM 0.2/0.5/1/2/5 NM,
+// 5 = no ZOOM range selected. A32NX.FCU_EFIS_{L,R}_RANGE_SET takes the knob position:
+// 0..4 = ZOOM 0.2/0.5/1/2/5 NM, 5..11 = 10..640 NM (a380_efis_range_selection).
 // The L-vars are outputs of FBW's FCU simulation, so only its events are used to change them.
 // Entering ARC never moves a ZOOM position, so mode and range can be sent back to back.
 // The displays are switched whether or not the OANS has airport data: L:A32NX_OANS_AVAILABLE
 // only reflects the one airport search FBW makes when the aircraft loads, which fails when the
 // map server (Navigraph, or AMDB Bridge in its place) was not reachable at that moment.
 constexpr int kFbwModeArc = 3;
-constexpr int kFbwZoomPosition = 3;  // ZOOM 2 NM
+// ZOOM 0.5 NM: tested in the sim, ZOOM 2 NM (the A350 FCOM value) was two detents too wide
+// to see the aircraft and the airport around it well. A closer ZOOM already selected is kept.
+constexpr int kFbwZoomPosition = 1;
+
+const char* fbwZoomName(double position) {
+  static const char* const kNames[] = {"0.2 NM", "0.5 NM", "1 NM", "2 NM", "5 NM", "off"};
+  if (!(position >= 0 && position <= 5)) {
+    return "?";
+  }
+  return kNames[static_cast<int>(position)];
+}
 
 void fbwQueueSide(const char* side) {
   char name[64];
@@ -167,7 +178,9 @@ void fbwQueueSide(const char* side) {
     queueCommand("%d (>K:A32NX.FCU_EFIS_%s_MODE_SET)", kFbwModeArc, side);
   }
   snprintf(name, sizeof(name), "A32NX_EFIS_%s_ND_RANGE", side);
-  if (readLVar(name) != 0) {
+  const bool zoomSelected = readLVar(name) == 0;
+  snprintf(name, sizeof(name), "A32NX_EFIS_%s_OANS_RANGE", side);
+  if (!zoomSelected || readLVar(name) > kFbwZoomPosition) {  // no ZOOM range, or a wider one
     queueCommand("%d (>K:A32NX.FCU_EFIS_%s_RANGE_SET)", kFbwZoomPosition, side);
   }
 }
@@ -179,8 +192,8 @@ void fbwLogSide(const char* when, const char* side) {
   snprintf(mode, sizeof(mode), "A32NX_EFIS_%s_ND_MODE", side);
   snprintf(range, sizeof(range), "A32NX_EFIS_%s_ND_RANGE", side);
   snprintf(oansRange, sizeof(oansRange), "A32NX_EFIS_%s_OANS_RANGE", side);
-  logLine("FBW A380X %s: ND %s mode %.0f (3 = ARC), range %.0f (0 = ZOOM), zoom %.0f (3 = 2 NM)", when, side,
-          readLVar(mode), readLVar(range), readLVar(oansRange));
+  logLine("FBW A380X %s: ND %s mode %.0f (3 = ARC), range %.0f (0 = ZOOM), zoom %s", when, side, readLVar(mode),
+          readLVar(range), fbwZoomName(readLVar(oansRange)));
 }
 
 bool fbwA380xShowAirportMap(int step) {

@@ -12,15 +12,16 @@ with a 2 NM range“, FCOM).
 
 | Flugzeug | Was nach der Landung passiert | Kartendaten für die Flughafenkarte |
 | -------- | ----------------------------- | ---------------------------------- |
-| **FlyByWire A380X** | beide NDs: Modus ARC, Range ZOOM 2 NM (OANS) | Navigraph oder [AMDB Bridge](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB) (Setup-Option „A350 and A380X“) |
+| **FlyByWire A380X** | beide NDs: Modus ARC, Range ZOOM 0,5 NM (OANS), F/O-Seite 1 s nach dem Captain | Navigraph oder [AMDB Bridge](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB) (Setup-Option „A350 and A380X“) |
 | **iniBuilds A350** | beide NDs: Modus ARC, Range ZOOM 2 NM (ANF), F/O-Seite 2 s nach dem Captain | Navigraph oder AMDB Bridge (Setup-Option „A350 and A380X“) |
 | **Synaptic A220** | beide MAP-Displays: Range 1 NM (Airport Moving Map) | Synaptic A220 **v1.0.10 oder neuer** (eigene Flughafenkarte) **oder** die A220-Karte von AMDB Bridge (Setup-Option „A220 moving map“, Paket `zzz-amdb-a220-amm`). Ohne beides zeigt der A220 in diesem Bereich „AIRPORT MAP FAULT“. |
 
 Mit AMDB Bridge: Starte AMDB Bridge **vor** dem Laden des Flugzeugs. Der FBW A380X fragt nur
 beim Laden nach, ob es Karten gibt.
 
-Hat eine Seite schon eine ZOOM-Stufe gewählt, bleibt diese. Andere Flugzeuge ignoriert das
-Addon komplett.
+Schon gewählte ZOOM-Stufen: Im FBW A380X bleiben ZOOM 0,5 NM und 0,2 NM stehen, eine
+weitere Stufe (1, 2 oder 5 NM) wird auf 0,5 NM gestellt. Im iniBuilds A350 bleibt jede schon
+gewählte ZOOM-Stufe stehen. Andere Flugzeuge ignoriert das Addon komplett.
 
 ## Installation
 
@@ -77,7 +78,7 @@ beide Versionen gleichzeitig drin lassen.
   „OANS Auto Zoom“ aktiviert ist. MSFS 2024 deaktiviert Community-Pakete manchmal von selbst.
   Im Entwicklermodus zeigt auch *Debug → Console* alle Meldungen (Präfix `[OansAutoZoom]`).
 - **FBW A380X, im Log `L:A32NX_OANS_AVAILABLE = 0`:** Das Addon stellt das ND trotzdem auf
-  ARC und ZOOM 2 NM, aber das OANS hatte beim Laden des Flugzeugs keine Kartendaten. Starte
+  ARC und ZOOM 0,5 NM, aber das OANS hatte beim Laden des Flugzeugs keine Kartendaten. Starte
   AMDB Bridge (bzw. verknüpfe Navigraph) vor dem Laden des Flugzeugs.
 - **A220 zeigt „AIRPORT MAP FAULT“:** Es ist keine Flughafenkarte installiert: A220 v1.0.10
   oder neuer, oder die A220-Karte von AMDB Bridge (und AMDB Bridge muss laufen).
@@ -87,11 +88,20 @@ beide Versionen gleichzeitig drin lassen.
 
 ## Status
 
-Version 1.1.0. Das Modul ist mit Compiler und Linker aus dem offiziellen MSFS 2024 SDK 1.7.3
+Version 1.2.0. Das Modul ist mit Compiler und Linker aus dem offiziellen MSFS 2024 SDK 1.7.3
 gebaut (`clang-cl.exe`, `wasm-ld.exe`), mit den Optionen des offiziellen
-„MSFS2024“-Visual-Studio-Toolsets. Die komplette Logik ist mit Host-Tests geprüft. Mangels
-Windows-Rechner mit MSFS ist es noch **nicht in einem laufenden Simulator getestet**. Welche
-Annahmen dabei offen sind, steht in [docs/aircraft-profiles.md](docs/aircraft-profiles.md).
+„MSFS2024“-Visual-Studio-Toolsets. Die komplette Logik ist mit Host-Tests geprüft.
+
+Im Simulator getestet (MSFS 2024, AMDB Bridge): **FBW A380X funktioniert** (mit Version 1.1.0;
+danach nur die Zoom-Stufe geändert). iniBuilds A350 und Synaptic A220 sind im Sim noch nicht
+getestet. Welche Annahmen dort offen sind, steht in [docs/aircraft-profiles.md](docs/aircraft-profiles.md).
+
+Änderungen in 1.2.0:
+
+- FBW A380X: zoomt nach der Landung auf ZOOM 0,5 NM statt 2 NM. Im Sim-Test waren 2 NM zwei
+  Stufen zu weit. Eine schon gewählte weitere ZOOM-Stufe (1, 2, 5 NM, z. B. von der
+  BTV-Auswahl im Anflug) wird jetzt ebenfalls auf 0,5 NM gestellt.
+- Das Log nennt die Zoom-Stufe in NM.
 
 Änderungen in 1.1.0:
 

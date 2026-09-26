@@ -370,19 +370,20 @@ int main() {
   fly(2, true, 140, 0);
   expectCommands("FBW: 2 s on the ground is not yet the landing", {});
   fly(1, true, 130, 0);
-  expectCommands("FBW: 3 s on the ground -> captain ND to ARC, ZOOM 2 NM",
-                 {"3 (>K:A32NX.FCU_EFIS_L_MODE_SET)", "3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)"});
+  expectCommands("FBW: 3 s on the ground -> captain ND to ARC, ZOOM 0.5 NM",
+                 {"3 (>K:A32NX.FCU_EFIS_L_MODE_SET)", "1 (>K:A32NX.FCU_EFIS_L_RANGE_SET)"});
   fly(1, true, 120, 0);
   expectCommands("FBW: one second later the first officer ND",
-                 {"3 (>K:A32NX.FCU_EFIS_R_MODE_SET)", "3 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
+                 {"3 (>K:A32NX.FCU_EFIS_R_MODE_SET)", "1 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
   expectValue("FBW: left ND mode ARC", g_lvars["A32NX_EFIS_L_ND_MODE"], 3);
-  expectValue("FBW: left OANS range 2 NM", g_lvars["A32NX_EFIS_L_OANS_RANGE"], 3);
-  expectValue("FBW: right OANS range 2 NM", g_lvars["A32NX_EFIS_R_OANS_RANGE"], 3);
+  expectValue("FBW: left ND range ZOOM", g_lvars["A32NX_EFIS_L_ND_RANGE"], 0);
+  expectValue("FBW: left OANS range 0.5 NM", g_lvars["A32NX_EFIS_L_OANS_RANGE"], 1);
+  expectValue("FBW: right OANS range 0.5 NM", g_lvars["A32NX_EFIS_R_OANS_RANGE"], 1);
   fly(120, true, 15, 0);
   expectCommands("FBW: nothing more while taxiing in", {});
   {
     const std::string log = readLog();
-    expectLogContains("log: module start", log, "OANS Auto Zoom 1.1.0 started");
+    expectLogContains("log: module start", log, "OANS Auto Zoom 1.2.0 started");
     expectLogContains("log: unsupported aircraft", log, "\"Asobo Cessna 172\"");
     expectLogContains("log: aircraft recognised", log,
                       "aircraft \"FlyByWire A380X (A380-842)\" (SimObjects\\AirPlanes\\FlyByWire_A380X\\presets"
@@ -393,9 +394,9 @@ int main() {
     expectLogContains("log: OANS availability", log, "L:A32NX_OANS_AVAILABLE = 1");
     expectLogContains("log: command", log, "send 3 (>K:A32NX.FCU_EFIS_L_MODE_SET)");
     expectLogContains("log: displays before", log,
-                      "FBW A380X before: ND L mode 0 (3 = ARC), range 1 (0 = ZOOM), zoom 5 (3 = 2 NM)");
+                      "FBW A380X before: ND L mode 0 (3 = ARC), range 1 (0 = ZOOM), zoom off");
     expectLogContains("log: displays after", log,
-                      "FBW A380X after: ND R mode 3 (3 = ARC), range 0 (0 = ZOOM), zoom 3 (3 = 2 NM)");
+                      "FBW A380X after: ND R mode 3 (3 = ARC), range 0 (0 = ZOOM), zoom 0.5 NM");
   }
 
   // Recognised by the MSFS 2020 package folder even if the livery title does not name it.
@@ -404,23 +405,48 @@ int main() {
   takeOffAndClimb();
   fly(3, true, 130, 0);
   expectCommands("FBW: recognised by the FlyByWire_A380_842 folder",
-                 {"3 (>K:A32NX.FCU_EFIS_L_MODE_SET)", "3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)"});
+                 {"3 (>K:A32NX.FCU_EFIS_L_MODE_SET)", "1 (>K:A32NX.FCU_EFIS_L_RANGE_SET)"});
   fly(10, true, 60, 0);
 
-  // BTV set up in PLAN with ZOOM 5 NM: only the mode changes, the pilot's zoom stays.
+  // BTV set up in PLAN with ZOOM 5 NM: a wider ZOOM is zoomed in to 0.5 NM as well.
   setUpFbw(4, 4, true);
   takeOffAndClimb();
   fly(5, true, 120, 0);
-  expectCommands("FBW: PLAN + ZOOM 5 NM -> ARC, zoom kept",
+  expectCommands("FBW: PLAN + ZOOM 5 NM -> ARC, ZOOM 0.5 NM",
+                 {"3 (>K:A32NX.FCU_EFIS_L_MODE_SET)", "1 (>K:A32NX.FCU_EFIS_L_RANGE_SET)",
+                  "3 (>K:A32NX.FCU_EFIS_R_MODE_SET)", "1 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
+  expectValue("FBW: left zoom 0.5 NM", g_lvars["A32NX_EFIS_L_OANS_RANGE"], 1);
+
+  // ARC with ZOOM 0.5 NM already: nothing to do.
+  setUpFbw(3, 1, true);
+  takeOffAndClimb();
+  fly(10, true, 120, 0);
+  expectCommands("FBW: ARC + ZOOM 0.5 NM already -> nothing", {});
+
+  // ROSE NAV with ZOOM 0.2 NM (closer than the add-on's zoom): only the mode changes.
+  setUpFbw(2, 0, true);
+  takeOffAndClimb();
+  fly(5, true, 120, 0);
+  expectCommands("FBW: ROSE NAV + ZOOM 0.2 NM -> ARC, zoom kept",
                  {"3 (>K:A32NX.FCU_EFIS_L_MODE_SET)", "3 (>K:A32NX.FCU_EFIS_R_MODE_SET)"});
-  expectValue("FBW: left zoom still 5 NM", g_lvars["A32NX_EFIS_L_OANS_RANGE"], 4);
+  expectValue("FBW: left zoom still 0.2 NM", g_lvars["A32NX_EFIS_L_OANS_RANGE"], 0);
 
   // ARC 20 NM: only the range changes.
   setUpFbw(3, 6, true);
   takeOffAndClimb();
   fly(5, true, 120, 0);
-  expectCommands("FBW: ARC 20 NM -> ZOOM 2 NM",
-                 {"3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)", "3 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
+  expectCommands("FBW: ARC 20 NM -> ZOOM 0.5 NM",
+                 {"1 (>K:A32NX.FCU_EFIS_L_RANGE_SET)", "1 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
+
+  // An FBW version without L:A32NX_EFIS_x_OANS_RANGE: no ZOOM range per ND_RANGE -> zoomed.
+  setUpFbw(3, 5, true);
+  g_lvars.erase("A32NX_EFIS_L_OANS_RANGE");
+  g_lvars.erase("A32NX_EFIS_R_OANS_RANGE");
+  takeOffAndClimb();
+  fly(5, true, 120, 0);
+  expectCommands("FBW: without the OANS_RANGE L-var -> ZOOM 0.5 NM via ND_RANGE",
+                 {"1 (>K:A32NX.FCU_EFIS_L_RANGE_SET)", "1 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
+  fly(10, true, 60, 0);
 
   // A bounce does not count; staying on the ground afterwards does.
   setUpFbw(3, 5, true);
@@ -430,7 +456,7 @@ int main() {
   fly(2, true, 125, 0);
   expectCommands("FBW: bounce -> nothing yet", {});
   fly(1, true, 120, 0);
-  expectCommands("FBW: 3 s on the ground after the bounce -> ZOOM", {"3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)"});
+  expectCommands("FBW: 3 s on the ground after the bounce -> ZOOM", {"1 (>K:A32NX.FCU_EFIS_L_RANGE_SET)"});
   fly(10, true, 60, 0);  // first officer side and read-back
 
   // L:A32NX_OANS_AVAILABLE = 0 (the airport search at aircraft load failed, e.g. AMDB Bridge
@@ -439,8 +465,8 @@ int main() {
   takeOffAndClimb();
   fly(10, true, 100, 0);
   expectCommands("FBW: L:A32NX_OANS_AVAILABLE = 0 -> switched anyway",
-                 {"3 (>K:A32NX.FCU_EFIS_L_MODE_SET)", "3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)",
-                  "3 (>K:A32NX.FCU_EFIS_R_MODE_SET)", "3 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
+                 {"3 (>K:A32NX.FCU_EFIS_L_MODE_SET)", "1 (>K:A32NX.FCU_EFIS_L_RANGE_SET)",
+                  "3 (>K:A32NX.FCU_EFIS_R_MODE_SET)", "1 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
   expectLogContains("log: OANS not available is reported", readLog(), "L:A32NX_OANS_AVAILABLE = 0");
 
   // Rejected take-off and a short hop below 100 ft do not arm.
@@ -456,7 +482,7 @@ int main() {
   fly(20, false, 150, 1500);
   fly(4, true, 130, 0);
   expectCommands("FBW: flight started on final",
-                 {"3 (>K:A32NX.FCU_EFIS_L_RANGE_SET)", "3 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
+                 {"1 (>K:A32NX.FCU_EFIS_L_RANGE_SET)", "1 (>K:A32NX.FCU_EFIS_R_RANGE_SET)"});
 
   // Moved to a gate while armed (no FlightLoaded event): no landing speed, nothing happens.
   setUpFbw(0, 5, true);

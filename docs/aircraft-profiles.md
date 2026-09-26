@@ -26,9 +26,15 @@ Daraus folgt das Verhalten des Addons:
    ersten Bodenkontakt. Das ähnelt Airbus' eigener Definition für Autobrake/BTV („nose gear
    down or 5 s after main gear down“). Ein Bounce setzt die Zählung zurück. Wird das Flugzeug
    dagegen auf den Boden gesetzt (Slew, Versetzen ans Gate), gilt das nicht als Landung.
-3. **Einmal pro Landung** werden beide NDs auf **ARC** und **ZOOM 2 NM** gestellt. Ist auf
-   einer Seite schon eine ZOOM-Stufe gewählt (vom Piloten oder vom Flugzeug selbst), bleibt
-   diese Stufe. Danach fasst das Addon die Displays bis zum nächsten Flug nicht mehr an.
+3. **Einmal pro Landung** werden beide NDs auf **ARC** und eine **ZOOM-Stufe** gestellt:
+   - **FBW A380X: ZOOM 0,5 NM.** Im Sim-Test mit 2 NM (wie im A350-FCOM) sah man Flughafen und
+     Flugzeug nicht nah genug; gewünscht waren zwei Rasten mehr. Steht schon 0,5 NM oder
+     0,2 NM, bleibt es dabei; eine weitere ZOOM-Stufe wird auf 0,5 NM gestellt.
+   - **iniBuilds A350: ZOOM 2 NM**, wie im FCOM. Ist schon eine ZOOM-Stufe gewählt (vom Piloten
+     oder von der eigenen Autozoom-Option), bleibt diese.
+   - **Synaptic A220:** 1 NM, die größte Stufe der Flughafenkarte (siehe unten).
+
+   Danach fasst das Addon die Displays bis zum nächsten Flug nicht mehr an.
 4. Befehle gehen **einer pro Frame** raus, damit keine Knopfraste verloren geht.
 
 ## Erkennung des Flugzeugs
@@ -51,9 +57,10 @@ Details mit Quellstellen: [fbw-a380x-oans-zoom.md](fbw-a380x-oans-zoom.md).
 | --- | --- | ------ |
 | OANS hat Daten? | `L:A32NX_OANS_AVAILABLE` = 1 (Navigraph oder AMDB Bridge); wird nur geloggt | FBW-Quellcode |
 | ND-Modus lesen | `L:A32NX_EFIS_{L,R}_ND_MODE`: 0 ROSE ILS, 1 ROSE VOR, 2 ROSE NAV, 3 ARC, 4 PLAN | FBW-Quellcode |
-| ZOOM schon aktiv? | `L:A32NX_EFIS_{L,R}_ND_RANGE` = 0 | FBW-Quellcode |
+| Zoom-Stufe lesen | `L:A32NX_EFIS_{L,R}_OANS_RANGE`: 0–4 = ZOOM 0,2/0,5/1/2/5 NM, 5 = kein ZOOM; davon liest auch FBWs ND die Stufe | FBW-Quellcode (`FcuBusPublisher.ts`, `Oanc.tsx`: `a380EfisZoomRangeSettings = [0.2, 0.5, 1, 2, 5]`) |
+| ZOOM aktiv? | `L:A32NX_EFIS_{L,R}_ND_RANGE` = 0 (Rückfallebene, falls es `…_OANS_RANGE` nicht gibt) | FBW-Quellcode |
 | ARC einstellen | `3 (>K:A32NX.FCU_EFIS_{L,R}_MODE_SET)` | FBW-Quellcode |
-| ZOOM 2 NM | `3 (>K:A32NX.FCU_EFIS_{L,R}_RANGE_SET)` (0–4 = ZOOM 0,2/0,5/1/2/5 NM) | FBW-Quellcode |
+| ZOOM 0,5 NM | `1 (>K:A32NX.FCU_EFIS_{L,R}_RANGE_SET)` (Knopfstellung: 0–4 = ZOOM 0,2/0,5/1/2/5 NM, 5–11 = 10–640 NM) | FBW-Quellcode (`A380FcuComputer_types.h`: `a380_efis_range_selection`) |
 
 Die L-Vars sind nur zum Lesen: FBW überschreibt sie in jedem Frame aus seiner FCU-Simulation.
 Das Addon stellt die NDs auch um, wenn `L:A32NX_OANS_AVAILABLE` = 0 ist. FBW setzt den Wert nur
