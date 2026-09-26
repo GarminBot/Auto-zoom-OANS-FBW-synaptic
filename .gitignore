@@ -1,2 +1,7 @@
 /build/
 /.msfs-sdk/
+bin/
+obj/
+*.user
+.vs/
+TestResults/

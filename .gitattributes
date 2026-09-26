@@ -1,4 +1,10 @@
-# The package files must reach the simulator byte for byte: layout.json lists their exact sizes.
-*.wasm binary
-manifest.json -text
-layout.json -text
+# Binaries stay byte for byte as built.
+*.exe binary
+*.ico binary
+*.png binary
+*.zip binary
+# Sources keep LF in the repository; Windows tools handle both.
+*.cs text eol=lf
+*.csproj text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
