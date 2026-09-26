@@ -377,21 +377,21 @@ namespace AiracUpdater.Gui
                 return;
             }
 
-            List<string> running = Blockers.Running();
+            List<PlanItem> selected = session.Items.Where(i => i.Selected && i.CanInstall).ToList();
+            if (selected.Count == 0)
+            {
+                return;
+            }
+
+            List<string> running = Blockers.Running(selected);
             if (running.Count > 0)
             {
                 MessageBox.Show(
                     this,
-                    "Bitte zuerst beenden: " + string.Join(", ", running) + ".\n\nSolange der Simulator läuft, sind die Navdaten gesperrt.",
-                    "Simulator läuft noch",
+                    "Bitte zuerst beenden: " + string.Join(", ", running) + ".\n\nSolange sie laufen, sind die Navdaten gesperrt.",
+                    "Programm läuft noch",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
-                return;
-            }
-
-            List<PlanItem> selected = session.Items.Where(i => i.Selected && i.CanInstall).ToList();
-            if (selected.Count == 0)
-            {
                 return;
             }
 
@@ -535,7 +535,7 @@ namespace AiracUpdater.Gui
                         UseItemStyleForSubItems = false,
                         ToolTipText = item.Target.TargetPath + (string.IsNullOrEmpty(item.Target.Details) ? string.Empty : "\n" + item.Target.Details),
                     };
-                    row.SubItems.Add(item.Target.Sim?.Name ?? "–");
+                    row.SubItems.Add(item.Target.SimLabel);
                     row.SubItems.Add(item.Target.InstalledCycleText);
                     row.SubItems.Add(item.Data?.CycleText ?? "–");
                     ListViewItem.ListViewSubItem statusItem = row.SubItems.Add(status);
@@ -689,10 +689,10 @@ namespace AiracUpdater.Gui
                 return;
             }
 
-            List<string> running = Blockers.Running();
+            List<string> running = Blockers.Running(new[] { item });
             if (running.Count > 0)
             {
-                MessageBox.Show(this, "Bitte zuerst beenden: " + string.Join(", ", running) + ".", "Simulator läuft noch", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, "Bitte zuerst beenden: " + string.Join(", ", running) + ".", "Programm läuft noch", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 

@@ -44,6 +44,7 @@ namespace AiracUpdater.Tests
             Assert.Equal("PMDG/NavigationData", data.DisplayPath);
             Assert.Equal("2510 rev. 2", data.CycleText);
 
+            List<PlanItem> pmdgItems = session.Items.Where(i => i.Target.Profile.Format == Catalog.Pmdg).ToList();
             PlanItem p738 = session.Items.Single(i => i.Target.Name == "PMDG 737-800" && i.Target.Sim.Version == SimVersion.Msfs2024);
             Assert.Equal(PlanState.Update, p738.State);
             Assert.Equal("2508 rev. 1", p738.Target.InstalledCycleText);
@@ -54,10 +55,11 @@ namespace AiracUpdater.Tests
             PlanItem p736 = session.Items.Single(i => i.Target.Name == "PMDG 737-600");
             Assert.Equal(PlanState.NotReady, p736.State);
             Assert.False(p736.CanInstall);
-            Assert.Equal(4, session.Items.Count);
+            Assert.Equal(4, pmdgItems.Count);
 
             var log = new List<string>();
             List<InstallResult> results = session.Install(true, log.Add, null);
+            // The three PMDG targets; the simulator rows have no data in this ZIP.
             Assert.Equal(3, results.Count);
             Assert.All(results, r => Assert.True(r.Success, r.Message));
 
@@ -74,7 +76,7 @@ namespace AiracUpdater.Tests
 
             // After the update everything reads as current.
             session.Refresh();
-            Assert.All(session.Items.Where(i => i.State != PlanState.NotReady), i => Assert.Equal(PlanState.UpToDate, i.State));
+            Assert.All(session.Items.Where(i => i.Target.Profile.Format == Catalog.Pmdg && i.State != PlanState.NotReady), i => Assert.Equal(PlanState.UpToDate, i.State));
         }
 
         [Fact]
@@ -91,13 +93,13 @@ namespace AiracUpdater.Tests
 
             using var session = new Session(pc.Folders, Catalog.Profiles, Catalog.Formats);
             session.LoadInput(dir.Combine("zip"), null);
-            PlanItem item = Assert.Single(session.Items);
+            PlanItem item = session.Items.Single(i => i.Target.Profile.Format == Catalog.Pmdg);
             Assert.Equal("MSFS 2024 (Steam)", item.Target.Sim.Name);
             Assert.All(session.Install(true, null, null), r => Assert.True(r.Success, r.Message));
             Assert.Contains("2510", File.ReadAllText(Path.Combine(nav, "cycle.json")));
 
             session.Refresh();
-            AddonTarget target = session.Items.Single().Target;
+            AddonTarget target = session.Items.Single(i => i.Target.Profile.Format == Catalog.Pmdg).Target;
             Assert.True(target.Profile.HasBackup(target, session.Context));
             target.Profile.RestoreBackup(target, new InstallOptions(session.Context, false, null));
             Assert.Contains("2509", File.ReadAllText(Path.Combine(nav, "cycle.json")));
@@ -114,7 +116,7 @@ namespace AiracUpdater.Tests
             Directory.CreateDirectory(Path.Combine(localState, "WASM", "MSFS2020", "pmdg-aircraft-77er", "work"));
 
             var context = ToolContext.Discover(pc.Folders);
-            AddonTarget target = Catalog.Profiles.SelectMany(p => p.Locate(context)).Single();
+            AddonTarget target = Catalog.Profiles.Where(p => p.Format == Catalog.Pmdg).SelectMany(p => p.Locate(context)).Single();
             Assert.Null(target.Problem);
             Assert.Equal(Path.Combine(localState, "WASM", "MSFS2020", "pmdg-aircraft-77er", "work", "NavigationData"), target.TargetPath);
         }
@@ -130,7 +132,7 @@ namespace AiracUpdater.Tests
             Directory.CreateDirectory(Path.Combine(localState, "WASM", "MSFS2024", "pmdg-aircraft-739", "work"));
 
             var context = ToolContext.Discover(pc.Folders);
-            Assert.Equal("PMDG 737-900", Catalog.Profiles.SelectMany(p => p.Locate(context)).Single().Name);
+            Assert.Equal("PMDG 737-900", Catalog.Profiles.Where(p => p.Format == Catalog.Pmdg).SelectMany(p => p.Locate(context)).Single().Name);
         }
     }
 }

@@ -34,8 +34,9 @@ namespace AiracUpdater.Core
     /// <summary>One place on this PC where an add-on (or the simulator) expects its navdata.</summary>
     public sealed class AddonTarget
     {
-        public AddonTarget(AddonProfile profile, SimInstallation sim, string name, string targetPath, AiracCycle? installedCycle, int installedRevision, string details, string problem = null)
+        public AddonTarget(AddonProfile profile, SimInstallation sim, string name, string targetPath, AiracCycle? installedCycle, int installedRevision, string details, string problem = null, bool hasData = true)
         {
+            HasData = hasData;
             Profile = profile;
             Sim = sim;
             Name = name;
@@ -63,6 +64,18 @@ namespace AiracUpdater.Core
 
         /// <summary>Extra information for the details view (package folder etc.).</summary>
         public string Details { get; }
+
+        /// <summary>Simulator column text; defaults to the simulator's name.</summary>
+        public string SimLabel
+        {
+            get => simLabel ?? Sim?.Name ?? "–";
+            set => simLabel = value;
+        }
+
+        private string simLabel;
+
+        /// <summary>False if no navdata is installed there yet.</summary>
+        public bool HasData { get; }
 
         /// <summary>Why the target cannot receive data right now (null if it can).</summary>
         public string Problem { get; }

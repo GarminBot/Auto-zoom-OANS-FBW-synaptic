@@ -28,8 +28,9 @@ namespace AiracUpdater.Core
         public static void Replace(string source, string target, string staging, string old, string backup, Action<string> log)
         {
             log = log ?? (_ => { });
-            string parent = Path.GetDirectoryName(target);
-            Directory.CreateDirectory(parent);
+            Directory.CreateDirectory(Path.GetDirectoryName(target));
+            Directory.CreateDirectory(Path.GetDirectoryName(staging));
+            Directory.CreateDirectory(Path.GetDirectoryName(old));
 
             // Leftovers of an interrupted earlier run.
             FileTools.DeleteDirectory(staging);

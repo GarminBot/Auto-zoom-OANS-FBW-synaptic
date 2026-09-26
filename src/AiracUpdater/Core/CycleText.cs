@@ -6,6 +6,10 @@ namespace AiracUpdater.Core
     /// <summary>Reads the AIRAC cycle from the small text files that navdata sets carry.</summary>
     public static class CycleText
     {
+        // Title of Navigraph's MSFS navdata package: "AIRAC Cycle 2609 rev.1".
+        private static readonly Regex TitleWithRevision =
+            new Regex(@"AIRAC\s+Cycle\s+(\d{4})\s*rev\.?\s*(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
         // Navigraph cycle_info.txt: "AIRAC cycle    : 2510" and "Version        : 1" (or "Revision").
         private static readonly Regex CycleLine =
             new Regex(@"AIRAC[ \t]*cycle[ \t]*:?[ \t]*(\d{4})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -29,6 +33,13 @@ namespace AiracUpdater.Core
             if (string.IsNullOrEmpty(text))
             {
                 return false;
+            }
+
+            Match title = TitleWithRevision.Match(text);
+            if (title.Success && AiracCycle.TryParse(title.Groups[1].Value, out cycle))
+            {
+                int.TryParse(title.Groups[2].Value, out revision);
+                return true;
             }
 
             Match match = CycleLine.Match(text);

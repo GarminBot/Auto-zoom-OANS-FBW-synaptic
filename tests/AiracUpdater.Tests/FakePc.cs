@@ -60,6 +60,40 @@ namespace AiracUpdater.Tests
             File.WriteAllText(path, content);
         }
 
+        /// <summary>Navigraph's two MSFS 2024 packages as Hub extracts them into Community.</summary>
+        public static void WriteMsfs2024Navdata(string folder, string cycle, int revision = 1, bool withBase = true)
+        {
+            if (withBase)
+            {
+                string basePackage = Path.Combine(folder, "navigraph-nav-base");
+                WriteFile(Path.Combine(basePackage, "manifest.json"),
+                    "{\"dependencies\":[],\"content_type\":\"SCENERY\",\"title\":\"AIRAC Cycle Base\",\"package_order_hint\":\"CUSTOM_NAVDATA\",\"package_version\":\"0.1.0\"}");
+                WriteFile(Path.Combine(basePackage, "layout.json"), "{\"content\":[]}");
+                WriteFile(Path.Combine(basePackage, "ContentInfo", "navigraph-navdata", "cycle.json"),
+                    "{\"Provider\":\"JEPPESEN\",\"Cycle\":\"" + cycle + "\",\"Revision\":" + revision + "}");
+                WriteFile(Path.Combine(basePackage, "scenery", "fs-base-jep", "scenery", "world", "base.bgl"), "BGL base " + cycle);
+            }
+
+            string jepp = Path.Combine(folder, "navigraph-nav-jepp");
+            WriteFile(Path.Combine(jepp, "manifest.json"),
+                "{\"dependencies\":[{\"name\":\"navigraph-nav-base\"}],\"title\":\"AIRAC Cycle " + cycle + " rev." + revision + "\",\"package_order_hint\":\"CUSTOM_NAVDATA_PATCH\",\"package_version\":\"2.25.1\"}");
+            WriteFile(Path.Combine(jepp, "layout.json"), "{\"content\":[]}");
+            WriteFile(Path.Combine(jepp, "scenery", "fs-base-jep", "scenery", "world", "AIRACCycle.bgl"), "BGL " + cycle);
+        }
+
+        /// <summary>Fenix navdata as Navigraph Hub leaves it, plus the files the Fenix app adds.</summary>
+        public static void WriteFenixData(string folder, string cycle, bool withImport = false)
+        {
+            WriteFile(Path.Combine(folder, "nd.db3"), "SQLite format 3\0 Fenix " + cycle);
+            WriteFile(Path.Combine(folder, "cycle_info.txt"), "AIRAC cycle    : " + cycle + "\r\nVersion        : 1\r\nValid (from/to): 19/MAR/2026 - 16/APR/2026\r\n");
+            WriteFile(Path.Combine(folder, "cycle.json"), "{\"cycle\":\"" + cycle + "\",\"revision\":\"1\",\"name\":\"Fenix A320\"}");
+            if (withImport)
+            {
+                WriteFile(Path.Combine(folder, "imported.db3"), "imported " + cycle);
+                WriteFile(Path.Combine(folder, "imported_cycle_hash.bin"), "hash");
+            }
+        }
+
         /// <summary>PMDG navdata as Navigraph Hub leaves it: database, cycle.json and cycle_info.txt.</summary>
         public static void WritePmdgData(string folder, string cycle, string revision = "1")
         {

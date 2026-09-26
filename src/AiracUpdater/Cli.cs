@@ -115,7 +115,7 @@ namespace AiracUpdater
                     return 0;
                 }
 
-                List<string> running = Blockers.Running();
+                List<string> running = Blockers.Running(session.Items.Where(i => i.Selected && i.CanInstall));
                 if (running.Count > 0)
                 {
                     print("Abbruch: bitte zuerst beenden: " + string.Join(", ", running));
@@ -139,7 +139,7 @@ namespace AiracUpdater
             {
                 string mark = item.Selected && item.CanInstall ? "[x]" : "[ ]";
                 print(mark + " " + item.Target.Name
-                    + " | " + (item.Target.Sim?.Name ?? "-")
+                    + " | " + item.Target.SimLabel
                     + " | installiert " + item.Target.InstalledCycleText
                     + " | ZIP " + (item.Data?.CycleText ?? "-")
                     + " | " + item.State + ": " + item.Message

@@ -7,6 +7,25 @@ namespace AiracUpdater.Core
     public static class Catalog
     {
         /// <summary>
+        /// Navigraph navdata for MSFS 2024 itself: navigraph-nav-base ("AIRAC Cycle Base") and
+        /// navigraph-nav-jepp ("AIRAC Cycle 2609 rev.1"), installed by Navigraph Hub into Community.
+        /// </summary>
+        public static readonly NavigraphPackagesFormat Msfs2024 = new NavigraphPackagesFormat(
+            "msfs2024", "MSFS-2024-Navdaten", SimVersion.Msfs2024, "navigraph-nav-base", "navigraph-nav-jepp");
+
+        /// <summary>The same for MSFS 2020: navigraph-navdata-base and navigraph-navdata.</summary>
+        public static readonly NavigraphPackagesFormat Msfs2020 = new NavigraphPackagesFormat(
+            "msfs2020", "MSFS-2020-Navdaten", SimVersion.Msfs2020, "navigraph-navdata-base", "navigraph-navdata");
+
+        /// <summary>Fenix A319/A320/A321: nd.db3 with cycle_info.txt and cycle.json.</summary>
+        public static readonly FileSignatureFormat Fenix = new FileSignatureFormat(
+            "fenix",
+            "Fenix-Navdaten",
+            new[] { "nd.db3" },
+            null,
+            new[] { "cycle.json", "cycle_info.txt" });
+
+        /// <summary>
         /// PMDG 737 and 777 (MSFS 2020 and 2024): Navigraph's DFD database for "all compatible PMDG
         /// products". Navigraph Hub replaces work\NavigationData with exactly these files.
         /// </summary>
@@ -19,6 +38,9 @@ namespace AiracUpdater.Core
 
         public static IReadOnlyList<NavDataFormat> Formats { get; } = new List<NavDataFormat>
         {
+            Msfs2024,
+            Msfs2020,
+            Fenix,
             Pmdg,
         };
 
@@ -26,7 +48,14 @@ namespace AiracUpdater.Core
 
         private static List<AddonProfile> BuildProfiles()
         {
-            var profiles = new List<AddonProfile>();
+            var profiles = new List<AddonProfile>
+            {
+                // The 2025 beta installed the packages with sort prefixes; Navigraph asks to delete them.
+                new SimNavdataProfile("msfs2024-navdata", "Simulator-Navdaten (Standardflugzeuge)", Msfs2024,
+                    new[] { "!!!navigraph-nav-base", "}}}navigraph-nav-jepp" }),
+                new SimNavdataProfile("msfs2020-navdata", "Simulator-Navdaten (Standardflugzeuge)", Msfs2020, null),
+                new FenixProfile(Fenix),
+            };
 
             // One package per model, the variants (BBJ, BCF, BDSF, ER ...) live inside it.
             (string Package, string Name, string[] Keywords)[] pmdg =

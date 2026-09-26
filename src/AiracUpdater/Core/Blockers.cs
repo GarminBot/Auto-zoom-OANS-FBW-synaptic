@@ -8,16 +8,19 @@ namespace AiracUpdater.Core
     /// <summary>Programs that keep navdata files open; updating while they run fails or corrupts data.</summary>
     public static class Blockers
     {
-        private static readonly (string Process, string Name)[] Known =
+        private static readonly (string Process, string Name)[] Simulators =
         {
             ("FlightSimulator2024", "Microsoft Flight Simulator 2024"),
             ("FlightSimulator", "Microsoft Flight Simulator 2020"),
         };
 
-        public static List<string> Running()
+        /// <summary>Running programs that block installing the given items: the simulators always.</summary>
+        public static List<string> Running(IEnumerable<PlanItem> items)
         {
+            IEnumerable<(string Process, string Name)> watched = Simulators.Concat(
+                items.SelectMany(i => i.Target.Profile.BlockingProcesses));
             var running = new List<string>();
-            foreach ((string process, string name) in Known)
+            foreach ((string process, string name) in watched)
             {
                 Process[] found;
                 try

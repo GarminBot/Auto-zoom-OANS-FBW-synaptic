@@ -42,7 +42,9 @@ namespace AiracUpdater.Core
         {
             if (!data.Cycle.HasValue || !target.InstalledCycle.HasValue)
             {
-                string message = !target.InstalledCycle.HasValue ? "installierter Zyklus unbekannt" : "Zyklus der ZIP-Daten unbekannt";
+                string message = !target.InstalledCycle.HasValue
+                    ? (target.HasData ? "installierter Zyklus unbekannt" : "noch keine Navdaten installiert")
+                    : "Zyklus der ZIP-Daten unbekannt";
                 return new PlanItem(target, data, PlanState.Unknown, message);
             }
 

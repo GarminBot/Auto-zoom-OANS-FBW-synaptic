@@ -66,6 +66,10 @@ namespace AiracUpdater.Core
         /// <summary>For add-ons without own navdata: who provides it, shown to the user.</summary>
         public virtual string CoveredBy => null;
 
+        /// <summary>Programs that hold this add-on's navdata open (process name, display name).</summary>
+        public virtual IEnumerable<(string Process, string Name)> BlockingProcesses =>
+            Array.Empty<(string Process, string Name)>();
+
         public abstract IEnumerable<AddonTarget> Locate(ToolContext context);
 
         /// <summary>Default: the target folder's content is replaced by the data set.</summary>
@@ -110,7 +114,7 @@ namespace AiracUpdater.Core
         protected AddonTarget Target(SimInstallation sim, string name, string targetPath, string details)
         {
             AiracCycle? cycle = ReadCycle(targetPath, out int revision);
-            return new AddonTarget(this, sim, name, targetPath, cycle, revision, details);
+            return new AddonTarget(this, sim, name, targetPath, cycle, revision, details, null, FileTools.HasAnyEntry(targetPath));
         }
 
         public static string BackupFolder(AddonTarget target, ToolContext context)
