@@ -6,22 +6,24 @@ Flughafen und eigenes Flugzeug gut zu sehen sind. Du musst dafür nichts tun.
 
 Vorbild sind der iniBuilds A380 („OANS Auto Zoom: ND automatically changes to the zoom range on
 touchdown“) und der echte A350 („At landing, the ND automatically displays the ANF in ARC mode,
-with a 2 NM range“, FCOM).
+with a 2 NM range“, FCOM). Das Addon zoomt näher heran, auf **0,5 NM**: Im Sim-Test waren 2 NM
+zwei Stufen zu weit.
 
 ## Unterstützte Flugzeuge
 
 | Flugzeug | Was nach der Landung passiert | Kartendaten für die Flughafenkarte |
 | -------- | ----------------------------- | ---------------------------------- |
 | **FlyByWire A380X** | beide NDs: Modus ARC, Range ZOOM 0,5 NM (OANS), F/O-Seite 1 s nach dem Captain | Navigraph oder [AMDB Bridge](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB) (Setup-Option „A350 and A380X“) |
-| **iniBuilds A350** | beide NDs: Modus ARC, Range ZOOM 2 NM (ANF), F/O-Seite 2 s nach dem Captain | Navigraph oder AMDB Bridge (Setup-Option „A350 and A380X“) |
-| **Synaptic A220** | beide MAP-Displays: Range 1 NM (Airport Moving Map) | Synaptic A220 **v1.0.10 oder neuer** (eigene Flughafenkarte) **oder** die A220-Karte von AMDB Bridge (Setup-Option „A220 moving map“, Paket `zzz-amdb-a220-amm`). Ohne beides zeigt der A220 in diesem Bereich „AIRPORT MAP FAULT“. |
+| **iniBuilds A350** | beide NDs: Modus ARC, Range ZOOM 0,5 NM (ANF), F/O-Seite 2 s nach dem Captain | Navigraph oder AMDB Bridge (Setup-Option „A350 and A380X“) |
+| **Synaptic A220** | beide MAP-Displays: Range 3000 FT (= 0,49 NM, die Stufe am nächsten an 0,5 NM; Airport Moving Map) | Synaptic A220 **v1.0.10 oder neuer** (eigene Flughafenkarte) **oder** die A220-Karte von AMDB Bridge (Setup-Option „A220 moving map“, Paket `zzz-amdb-a220-amm`). Ohne beides zeigt der A220 in diesem Bereich „AIRPORT MAP FAULT“. |
 
 Mit AMDB Bridge: Starte AMDB Bridge **vor** dem Laden des Flugzeugs. Der FBW A380X fragt nur
 beim Laden nach, ob es Karten gibt.
 
-Schon gewählte ZOOM-Stufen: Im FBW A380X bleiben ZOOM 0,5 NM und 0,2 NM stehen, eine
-weitere Stufe (1, 2 oder 5 NM) wird auf 0,5 NM gestellt. Im iniBuilds A350 bleibt jede schon
-gewählte ZOOM-Stufe stehen. Andere Flugzeuge ignoriert das Addon komplett.
+Schon gewählte ZOOM-Stufen: Im FBW A380X und im iniBuilds A350 bleiben ZOOM 0,5 NM und
+0,2 NM stehen, eine weitere Stufe (1, 2 oder 5 NM) wird auf 0,5 NM gestellt. Im Synaptic A220
+landet der Knopf immer auf 3000 FT, weil der A220 seine Stufe nirgends meldet. Andere
+Flugzeuge ignoriert das Addon komplett.
 
 ## Installation
 
@@ -82,19 +84,31 @@ beide Versionen gleichzeitig drin lassen.
   AMDB Bridge (bzw. verknüpfe Navigraph) vor dem Laden des Flugzeugs.
 - **A220 zeigt „AIRPORT MAP FAULT“:** Es ist keine Flughafenkarte installiert: A220 v1.0.10
   oder neuer, oder die A220-Karte von AMDB Bridge (und AMDB Bridge muss laufen).
-- **iniBuilds A350:** Der A350 hat eine eigene Option dafür („autozoom“ im OIS). Ist sie an,
-  ist die Karte beim Auslösen schon da und das Addon lässt sie so. Beides zusammen stört sich
-  nicht.
+- **iniBuilds A350:** Der A350 hat eine eigene Option dafür („autozoom“ im OIS, standardmäßig
+  aus). Ist sie an, blendet der A350 die Karte schon beim Aufsetzen ein; das Addon zoomt danach
+  auf 0,5 NM und prüft jede Seite 2 s später noch einmal. Springt die Karte trotzdem wieder auf
+  eine weitere Stufe zurück, schalte die Option im OIS aus. Im Log steht dann
+  `… is ZOOM 2 NM again …` o. ä.
+- **Synaptic A220 zeigt nicht 3000 FT:** Das Addon dreht den Knopf blind (der A220 meldet seine
+  Stufe nicht), ausgehend von 1000 FT als kleinster Stufe. Hat deine A220-Version andere Stufen,
+  sag Bescheid, welche Stufe am Ende eingestellt war.
 
 ## Status
 
-Version 1.2.0. Das Modul ist mit Compiler und Linker aus dem offiziellen MSFS 2024 SDK 1.7.3
+Version 1.3.0. Das Modul ist mit Compiler und Linker aus dem offiziellen MSFS 2024 SDK 1.7.3
 gebaut (`clang-cl.exe`, `wasm-ld.exe`), mit den Optionen des offiziellen
 „MSFS2024“-Visual-Studio-Toolsets. Die komplette Logik ist mit Host-Tests geprüft.
 
 Im Simulator getestet (MSFS 2024, AMDB Bridge): **FBW A380X funktioniert** (mit Version 1.1.0;
 danach nur die Zoom-Stufe geändert). iniBuilds A350 und Synaptic A220 sind im Sim noch nicht
 getestet. Welche Annahmen dort offen sind, steht in [docs/aircraft-profiles.md](docs/aircraft-profiles.md).
+
+Änderungen in 1.3.0:
+
+- iniBuilds A350: zoomt auf ZOOM 0,5 NM statt 2 NM, wie der A380X. Eine weitere ZOOM-Stufe
+  wird ebenfalls auf 0,5 NM gestellt, auch die der eingebauten Autozoom-Option. Jede Seite wird
+  2 s später noch einmal geprüft.
+- Synaptic A220: dreht auf 3000 FT (0,49 NM) statt 1 NM.
 
 Änderungen in 1.2.0:
 

@@ -383,7 +383,7 @@ int main() {
   expectCommands("FBW: nothing more while taxiing in", {});
   {
     const std::string log = readLog();
-    expectLogContains("log: module start", log, "OANS Auto Zoom 1.2.0 started");
+    expectLogContains("log: module start", log, "OANS Auto Zoom 1.3.0 started");
     expectLogContains("log: unsupported aircraft", log, "\"Asobo Cessna 172\"");
     expectLogContains("log: aircraft recognised", log,
                       "aircraft \"FlyByWire A380X (A380-842)\" (SimObjects\\AirPlanes\\FlyByWire_A380X\\presets"
@@ -505,38 +505,89 @@ int main() {
   takeOffAndClimb();
   expectCommands("A350: nothing during taxi, take-off and climb", {});
   fly(3, true, 130, 0);
-  expectCommands("A350: landing -> captain ND to ARC, ZOOM 2 NM",
-                 {"3 (>L:INI_MAP_MODE_CAPT_SWITCH)", "3 (>L:INI_MAP_RANGE_CAPT_SWITCH)"});
+  expectCommands("A350: landing -> captain ND to ARC, ZOOM 0.5 NM",
+                 {"3 (>L:INI_MAP_MODE_CAPT_SWITCH)", "1 (>L:INI_MAP_RANGE_CAPT_SWITCH)"});
   fly(1, true, 120, 0);
   expectCommands("A350: first officer not yet (2 s apart)", {});
   fly(1, true, 110, 0);
   expectCommands("A350: first officer ND two seconds later",
-                 {"3 (>L:INI_MAP_MODE_FO_SWITCH)", "3 (>L:INI_MAP_RANGE_FO_SWITCH)"});
+                 {"3 (>L:INI_MAP_MODE_FO_SWITCH)", "1 (>L:INI_MAP_RANGE_FO_SWITCH)"});
+  expectValue("A350: captain range ZOOM 0.5 NM", g_lvars["INI_MAP_RANGE_CAPT_SWITCH"], 1);
+  expectValue("A350: first officer range ZOOM 0.5 NM", g_lvars["INI_MAP_RANGE_FO_SWITCH"], 1);
   fly(120, true, 15, 0);
   expectCommands("A350: nothing more while taxiing in", {});
+  {
+    const std::string log = readLog();
+    expectLogContains("log: A350 before", log,
+                      "iniBuilds A350 before: INI_MAP_MODE_CAPT_SWITCH = 0 (LS), INI_MAP_RANGE_CAPT_SWITCH = 5 (10 NM)");
+    expectLogContains("log: A350 after", log,
+                      "iniBuilds A350 after: INI_MAP_MODE_FO_SWITCH = 3 (ARC), INI_MAP_RANGE_FO_SWITCH = 1 (ZOOM 0.5 NM)");
+  }
 
   // Range knob named as in iniBuilds' L-var list.
   setUpA350("A350-1000", 3, 7, true);
   takeOffAndClimb();
   fly(6, true, 120, 0);
   expectCommands("A350: INI_MAP_MODE_RANGE_*_SWITCH naming",
-                 {"3 (>L:INI_MAP_MODE_RANGE_CAPT_SWITCH)", "3 (>L:INI_MAP_MODE_RANGE_FO_SWITCH)"});
+                 {"1 (>L:INI_MAP_MODE_RANGE_CAPT_SWITCH)", "1 (>L:INI_MAP_MODE_RANGE_FO_SWITCH)"});
+  fly(10, true, 60, 0);  // re-checks and read-back
 
-  // The aircraft's own auto zoom (OIS option) already selected ZOOM: nothing to do.
+  // The aircraft's own autozoom (OIS option) selected ZOOM 2 NM at touchdown: zoomed in further.
   setUpA350("A350-900", 3, 5, false);
+  g_lvars["INI_ANF_AUTO_ZOOM"] = 1;
   takeOffAndClimb();
   fly(2, true, 130, 0);
   g_lvars["INI_MAP_RANGE_CAPT_SWITCH"] = 3;
   g_lvars["INI_MAP_RANGE_FO_SWITCH"] = 3;
   fly(5, true, 100, 0);
-  expectCommands("A350: map already shown by the aircraft -> nothing", {});
+  expectCommands("A350: own autozoom at ZOOM 2 NM -> ZOOM 0.5 NM",
+                 {"1 (>L:INI_MAP_RANGE_CAPT_SWITCH)", "1 (>L:INI_MAP_RANGE_FO_SWITCH)"});
+  expectLogContains("log: A350 own autozoom option", readLog(),
+                    "iniBuilds A350: own autozoom option L:INI_ANF_AUTO_ZOOM = 1");
+  fly(10, true, 60, 0);
+  expectCommands("A350: nothing more once both are at 0.5 NM", {});
+
+  // The aircraft's own autozoom fires after the add-on and widens the captain's range again:
+  // set once more, two seconds after the first officer's side.
+  setUpA350("A350-900", 3, 5, false);
+  takeOffAndClimb();
+  fly(3, true, 130, 0);
+  expectCommands("A350: late autozoom, first the captain", {"1 (>L:INI_MAP_RANGE_CAPT_SWITCH)"});
+  g_lvars["INI_MAP_RANGE_CAPT_SWITCH"] = 3;  // the aircraft switches to 2 NM after the add-on
+  fly(4, true, 110, 0);
+  expectCommands("A350: late autozoom -> first officer, then the captain once more",
+                 {"1 (>L:INI_MAP_RANGE_FO_SWITCH)", "1 (>L:INI_MAP_RANGE_CAPT_SWITCH)"});
+  expectValue("A350: captain back at ZOOM 0.5 NM", g_lvars["INI_MAP_RANGE_CAPT_SWITCH"], 1);
+  expectLogContains("log: A350 re-check", readLog(),
+                    "INI_MAP_RANGE_CAPT_SWITCH is ZOOM 2 NM again, setting ZOOM 0.5 NM once more");
+  fly(10, true, 60, 0);
+  expectCommands("A350: late autozoom -> nothing after the re-checks", {});
+
+  // The same on the first officer's side: re-checked two seconds after the captain's re-check.
+  setUpA350("A350-900", 3, 5, false);
+  takeOffAndClimb();
+  fly(5, true, 130, 0);
+  expectCommands("A350: late autozoom F/O, both sides set",
+                 {"1 (>L:INI_MAP_RANGE_CAPT_SWITCH)", "1 (>L:INI_MAP_RANGE_FO_SWITCH)"});
+  g_lvars["INI_MAP_RANGE_FO_SWITCH"] = 3;
+  fly(4, true, 100, 0);
+  expectCommands("A350: late autozoom F/O -> set once more", {"1 (>L:INI_MAP_RANGE_FO_SWITCH)"});
+  fly(10, true, 60, 0);
+
+  // A closer ZOOM (0.2 NM) already selected is kept; only the mode changes.
+  setUpA350("A350-900", 2, 0, false);  // NAV, ZOOM 0.2 NM
+  takeOffAndClimb();
+  fly(10, true, 120, 0);
+  expectCommands("A350: NAV + ZOOM 0.2 NM -> ARC, zoom kept",
+                 {"3 (>L:INI_MAP_MODE_CAPT_SWITCH)", "3 (>L:INI_MAP_MODE_FO_SWITCH)"});
+  expectValue("A350: captain still ZOOM 0.2 NM", g_lvars["INI_MAP_RANGE_CAPT_SWITCH"], 0);
 
   // Recognised by the aircraft.cfg path even if the title does not name it.
   setUpA350("Lufthansa D-AIXA", 3, 5, false);
   sendSystemEvent("AircraftLoaded");
   takeOffAndClimb();
   fly(3, true, 130, 0);
-  expectCommands("A350: recognised by its aircraft.cfg path", {"3 (>L:INI_MAP_RANGE_CAPT_SWITCH)"});
+  expectCommands("A350: recognised by its aircraft.cfg path", {"1 (>L:INI_MAP_RANGE_CAPT_SWITCH)"});
 
   // Other iniBuilds aircraft use INI_MAP_RANGE_CAPT_SWITCH with another scale: never touched.
   loadAircraft(Type::IniA320, "A320neo V2", "SimObjects\\Airplanes\\Asobo_A320_NEO\\aircraft.cfg");
@@ -571,13 +622,13 @@ int main() {
     for (int i = 0; i < 30; ++i) {
       expected.push_back("(>H:A220_CTP_RANGE_" + std::to_string(ctp) + "_DEC)");
     }
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 2; ++i) {
       expected.push_back("(>H:A220_CTP_RANGE_" + std::to_string(ctp) + "_INC)");
     }
   }
-  expectCommands("A220: both range knobs to the smallest range, then up to 1 NM", expected);
-  expectValue("A220: captain map at 1 NM", g_a220Range[1], 3);
-  expectValue("A220: first officer map at 1 NM", g_a220Range[2], 3);
+  expectCommands("A220: both range knobs to the smallest range, then up to 3000 FT", expected);
+  expectValue("A220: captain map at 3000 FT", kA220Ranges[g_a220Range[1]] == "3000 FT", 1);
+  expectValue("A220: first officer map at 3000 FT", kA220Ranges[g_a220Range[2]] == "3000 FT", 1);
   fly(120, true, 15, 0);
   expectCommands("A220: nothing more while taxiing in", {});
 

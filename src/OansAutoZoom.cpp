@@ -4,7 +4,8 @@
 // zoomed in so that the airport and the own aircraft are clearly visible - the way
 // the iniBuilds A380 does it ("OANS Auto Zoom") and the way the real A350 does it
 // ("At landing, the ND automatically displays the ANF in ARC mode, with a 2 NM
-// range", FCOM DSC-34-NAV-80-20-10). Supported aircraft: FlyByWire A380X,
+// range", FCOM DSC-34-NAV-80-20-10). The zoom is 0.5 NM rather than 2 NM: tested in
+// the sim, 2 NM was two detents too wide. Supported aircraft: FlyByWire A380X,
 // iniBuilds A350, Synaptic A220 (see kProfiles).
 //
 // How it works:
@@ -44,7 +45,7 @@ namespace {
 // Log
 // ---------------------------------------------------------------------------
 
-constexpr const char* kVersion = "1.2.0";
+constexpr const char* kVersion = "1.3.0";
 constexpr const char* kLogPath = OANS_LOG_PATH;
 double g_secondsSinceStart = 0;  // simulator time since the module was loaded, from the Frame event
 
@@ -225,7 +226,26 @@ bool fbwA380xShowAirportMap(int step) {
 // Other iniBuilds aircraft use the same names with a different scale; the profile only runs
 // when the A350 has been recognised.
 constexpr int kA350ModeArc = 3;
-constexpr int kA350ZoomPosition = 3;  // ZOOM 2 NM
+// ZOOM 0.5 NM, like the FBW A380X. A closer ZOOM already selected is kept; a wider one is zoomed
+// in, including the one the aircraft's own OIS "autozoom" option selects at touchdown.
+constexpr int kA350ZoomPosition = 1;
+
+const char* a350ModeName(double mode) {
+  static const char* const kNames[] = {"LS", "VOR", "NAV", "ARC", "PLAN"};
+  if (!(mode >= 0 && mode <= 4)) {
+    return "?";
+  }
+  return kNames[static_cast<int>(mode)];
+}
+
+const char* a350RangeName(double position) {
+  static const char* const kNames[] = {"ZOOM 0.2 NM", "ZOOM 0.5 NM", "ZOOM 1 NM", "ZOOM 2 NM", "ZOOM 5 NM", "10 NM",
+                                       "20 NM",       "40 NM",       "80 NM",     "160 NM",    "320 NM",    "640 NM"};
+  if (!(position >= 0 && position <= 11)) {
+    return "?";
+  }
+  return kNames[static_cast<int>(position)];
+}
 
 // Looks up the names of the mode and range L-vars of one side; false if the aircraft has none.
 bool a350FindSideVars(const char* side, char (&modeVar)[64], char (&rangeVar)[64]) {
@@ -241,8 +261,10 @@ void a350LogSide(const char* when, const char* side) {
   char modeVar[64];
   char rangeVar[64];
   if (a350FindSideVars(side, modeVar, rangeVar)) {
-    logLine("iniBuilds A350 %s: %s = %.0f (3 = ARC), %s = %.0f (3 = ZOOM 2 NM)", when, modeVar, readLVar(modeVar),
-            rangeVar, readLVar(rangeVar));
+    const double mode = readLVar(modeVar);
+    const double range = readLVar(rangeVar);
+    logLine("iniBuilds A350 %s: %s = %.0f (%s), %s = %.0f (%s)", when, modeVar, mode, a350ModeName(mode), rangeVar,
+            range, a350RangeName(range));
   }
 }
 
@@ -257,28 +279,53 @@ void a350QueueSide(const char* side) {
   if (readLVar(modeVar) != kA350ModeArc) {
     queueCommand("%d (>L:%s)", kA350ModeArc, modeVar);
   }
-  if (readLVar(rangeVar) > 4) {  // 0..4 = a ZOOM range is already selected
+  if (readLVar(rangeVar) > kA350ZoomPosition) {  // no ZOOM range, or a wider one
+    queueCommand("%d (>L:%s)", kA350ZoomPosition, rangeVar);
+  }
+}
+
+// Two seconds after a side has been set: if its range has been widened again in the meantime,
+// e.g. by the aircraft's own autozoom firing after the add-on, it is set once more.
+void a350RecheckSide(const char* side) {
+  char modeVar[64];
+  char rangeVar[64];
+  if (!a350FindSideVars(side, modeVar, rangeVar)) {
+    return;
+  }
+  const double range = readLVar(rangeVar);
+  if (range > kA350ZoomPosition) {
+    logLine("iniBuilds A350: %s is %s again, setting %s once more", rangeVar, a350RangeName(range),
+            a350RangeName(kA350ZoomPosition));
     queueCommand("%d (>L:%s)", kA350ZoomPosition, rangeVar);
   }
 }
 
 bool iniA350ShowAirportMap(int step) {
-  // The first officer's side follows two seconds later: loading the map on both NDs at
-  // the same moment has crashed the A350 in the past (fixed in v1.0.5).
+  // The first officer's side follows two seconds after the captain's, and each re-check two
+  // seconds after the previous change: loading the map on both NDs at the same moment has
+  // crashed the A350 in the past (fixed in v1.0.5).
   switch (step) {
     case 0:
+      if (lvarExists("INI_ANF_AUTO_ZOOM")) {
+        logLine("iniBuilds A350: own autozoom option L:INI_ANF_AUTO_ZOOM = %.0f", readLVar("INI_ANF_AUTO_ZOOM"));
+      }
       a350QueueSide("CAPT");
       return false;
     case 2:
       a350QueueSide("FO");
       return false;
-    case 1:
-    case 3:
+    case 4:
+      a350RecheckSide("CAPT");
       return false;
-    default:  // two seconds after the last command
+    case 6:
+      a350RecheckSide("FO");
+      return false;
+    case 8:  // two seconds after the last possible command
       a350LogSide("after", "CAPT");
       a350LogSide("after", "FO");
       return true;
+    default:
+      return false;
   }
 }
 
@@ -286,17 +333,18 @@ bool iniA350ShowAirportMap(int step) {
 // The MAP range knob of each Control Tuning Panel fires H:A220_CTP_RANGE_{1,2}_{INC,DEC}
 // once per detent (1 = captain, 2 = first officer). Below 2 NM on the ground the MAP shows the
 // airport moving map; its ranges are 1000 FT, 2000 FT, 3000 FT and 1 NM. The aircraft publishes
-// the selected range nowhere, so the knob is turned to the smallest range first and then three
-// detents up to 1 NM, the widest airport map range. The airport moving map itself needs
-// Synaptic A220 v1.0.10 or newer; older versions show AIRPORT MAP FAULT at these ranges.
+// the selected range nowhere, so the knob is turned to the smallest range first and then two
+// detents up to 3000 FT (0.49 NM), the closest match to the 0.5 NM of the Airbus profiles. The
+// airport moving map itself needs Synaptic A220 v1.0.10 or newer (or AMDB Bridge's A220 map);
+// older versions show AIRPORT MAP FAULT at these ranges.
 constexpr int kA220DetentsToSmallestRange = 30;
-constexpr int kA220DetentsSmallestTo1Nm = 3;
+constexpr int kA220DetentsSmallestTo3000Ft = 2;
 
 void a220QueueSide(int ctp) {
   for (int i = 0; i < kA220DetentsToSmallestRange; ++i) {
     queueCommand("(>H:A220_CTP_RANGE_%d_DEC)", ctp);
   }
-  for (int i = 0; i < kA220DetentsSmallestTo1Nm; ++i) {
+  for (int i = 0; i < kA220DetentsSmallestTo3000Ft; ++i) {
     queueCommand("(>H:A220_CTP_RANGE_%d_INC)", ctp);
   }
 }

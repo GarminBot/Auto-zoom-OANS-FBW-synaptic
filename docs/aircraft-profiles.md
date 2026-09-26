@@ -26,15 +26,16 @@ Daraus folgt das Verhalten des Addons:
    ersten Bodenkontakt. Das ähnelt Airbus' eigener Definition für Autobrake/BTV („nose gear
    down or 5 s after main gear down“). Ein Bounce setzt die Zählung zurück. Wird das Flugzeug
    dagegen auf den Boden gesetzt (Slew, Versetzen ans Gate), gilt das nicht als Landung.
-3. **Einmal pro Landung** werden beide NDs auf **ARC** und eine **ZOOM-Stufe** gestellt:
-   - **FBW A380X: ZOOM 0,5 NM.** Im Sim-Test mit 2 NM (wie im A350-FCOM) sah man Flughafen und
-     Flugzeug nicht nah genug; gewünscht waren zwei Rasten mehr. Steht schon 0,5 NM oder
-     0,2 NM, bleibt es dabei; eine weitere ZOOM-Stufe wird auf 0,5 NM gestellt.
-   - **iniBuilds A350: ZOOM 2 NM**, wie im FCOM. Ist schon eine ZOOM-Stufe gewählt (vom Piloten
-     oder von der eigenen Autozoom-Option), bleibt diese.
-   - **Synaptic A220:** 1 NM, die größte Stufe der Flughafenkarte (siehe unten).
+3. **Einmal pro Landung** werden beide NDs auf **ARC** und **ZOOM 0,5 NM** gestellt. Im
+   Sim-Test mit 2 NM (wie im A350-FCOM) sah man Flughafen und Flugzeug im FBW A380X nicht nah
+   genug; gewünscht waren zwei Rasten mehr, und so auch in den anderen beiden Flugzeugen.
+   - **FBW A380X und iniBuilds A350:** Steht schon 0,5 NM oder 0,2 NM, bleibt es dabei; eine
+     weitere ZOOM-Stufe (1, 2, 5 NM) wird auf 0,5 NM gestellt.
+   - **Synaptic A220:** 3000 FT (0,49 NM), die Stufe der Flughafenkarte, die 0,5 NM am nächsten
+     kommt (siehe unten).
 
-   Danach fasst das Addon die Displays bis zum nächsten Flug nicht mehr an.
+   Danach fasst das Addon die Displays bis zum nächsten Flug nicht mehr an. Nur im A350 prüft es
+   jede Seite 2 s später noch einmal (siehe unten).
 4. Befehle gehen **einer pro Frame** raus, damit keine Knopfraste verloren geht.
 
 ## Erkennung des Flugzeugs
@@ -75,6 +76,7 @@ bleibt er `0`, obwohl die Karten später vielleicht kommen. Erkannt wird der A38
 | ND-Modus | `L:INI_MAP_MODE_{CAPT,FO}_SWITCH`: 0 LS, 1 VOR, 2 NAV, 3 ARC, 4 PLAN | iniBuilds-L-Var-Liste (Feb. 2025), HubHop, YourControls, CrewMate |
 | Range-Knopf | `L:INI_MAP_RANGE_{CAPT,FO}_SWITCH`: 0–4 = ZOOM, 5–11 = 10–640 NM | HubHop (u. a. „Zoom Stage 1“ = 4, ZOOM-Lampe = Wert < 5), YourControls, CrewMate |
 | ZOOM-Stufen | 4 = 5 NM, 3 = 2 NM, 2 = 1 NM, 1 = 0,5 NM, 0 = 0,2 NM | Handbuch 1.3, S. 57 (Stufen 5 → 0,2 NM gegen den Uhrzeigersinn); Zuordnung daraus abgeleitet |
+| ZOOM 0,5 NM | `1 (>L:INI_MAP_RANGE_{CAPT,FO}_SWITCH)` | aus den Zeilen darüber |
 | Direktes Schreiben | funktioniert; iniBuilds erlaubt ausdrücklich die Steuerung über diese L-Vars | iniBuilds-Forum, CrewMate liest den Wert nach dem Schreiben zurück |
 
 - **Schreibweise:** iniBuilds' eigene L-Var-Liste nennt den Range-Knopf
@@ -85,14 +87,22 @@ bleibt er `0`, obwohl die Karten später vielleicht kommen. Erkannt wird der A38
   anderer Skala. Deshalb schreibt das Addon nur, wenn der A350 erkannt wurde.
 - Die Seite des F/O folgt **2 s nach** dem Captain. Das gleichzeitige Laden der Karte auf beiden
   NDs hat den A350 früher zum Absturz gebracht (behoben in v1.0.5).
-- **Eingebaute Funktion:** Der A350 kann das auch selbst (Option „autozoom“ im OIS, laut
-  iniBuilds-Forum; L-Var `INI_ANF_AUTO_ZOOM`). Ist sie aktiv, steht der Knopf beim Auslösen
-  schon auf ZOOM und das Addon lässt ihn so.
+- **Eingebaute Funktion:** Der A350 kann die Karte auch selbst einblenden: Option „autozoom“
+  im OIS, standardmäßig aus
+  ([iniBuilds-Forum](https://forum.inibuilds.com/topic/34045-airport-map-not-activating-on-landing/),
+  L-Var `INI_ANF_AUTO_ZOOM`, das Addon schreibt ihren Wert ins Log). Laut Nutzern greift sie
+  sofort beim Aufsetzen
+  ([MSFS-Forum](https://forums.flightsimulator.com/t/a350-auto-zoom-during-touch-down-rev/712431)),
+  also vor dem Addon. Welche Stufe sie wählt, ist nirgends dokumentiert; steht danach eine
+  weitere als 0,5 NM, zoomt das Addon weiter hinein.
+- **Nachprüfen:** Je 2 s nach dem Captain bzw. dem F/O liest das Addon den Range-Knopf noch
+  einmal. Hat ihn inzwischen etwas weiter gestellt (etwa die eingebaute Funktion, falls sie doch
+  nach dem Addon greift), stellt es ihn einmal erneut auf 0,5 NM. Danach liest es beide Seiten
+  zurück und schreibt sie ins Log.
 - Beim ersten Laden einer Flughafenkarte kann der Sim laut iniBuilds bis zu 10 s einfrieren.
   Das ist normal.
 - **Kartendaten:** Navigraph oder AMDB Bridge. AMDB Bridge ändert dafür im A350-EFB nur die
   Token-Übergabe an das OANS-Gauge; die L-Vars des EFIS-Panels bleiben dieselben.
-- Zwei Sekunden nach dem F/O liest das Addon beide Seiten zurück und schreibt sie ins Log.
 
 ## Synaptic A220 — belegt, eine Annahme
 
@@ -102,20 +112,23 @@ bleibt er `0`, obwohl die Karten später vielleicht kommen. Erkannt wird der A38
 | Wann zeigt die MAP die Flughafenkarte? | am Boden unterhalb 2 NM (MAP und PLAN) | [A220 Pilot Guide](https://ugc.production.linktr.ee/2825963b-7686-43fb-913e-0530abe9b753_Airbus-A220-Pilot-Guide.pdf) (nach FCOM), S. 114: *„Zooming in below 2 nm automatically displays the AMM.“* |
 | Kartenbereiche der Flughafenkarte | 1000 FT, 2000 FT, 3000 FT, 1 NM (kleinste Stufen) | zwei Community-Mods lesen genau diese Beschriftungen aus dem Flugzeug |
 
-- Der A220 meldet den eingestellten Bereich nirgends zurück (keine L-Var, nur JS-intern). Das
-  Addon dreht deshalb jeden Knopf 30 Rasten zurück auf den kleinsten Bereich und dann 3 Rasten
-  vor auf **1 NM**, die größte Stufe der Flughafenkarte.
+- Der A220 meldet den eingestellten Bereich nirgends zurück (keine L-Var, nur JS-intern; auch
+  die [L-Var-Liste von Synaptic](https://docs.synapticsim.com/pilots/simvars) nennt für das CTP
+  nur Helligkeit und Crosstune). Das Addon dreht deshalb jeden Knopf 30 Rasten zurück auf den
+  kleinsten Bereich (1000 FT) und dann 2 Rasten vor auf **3000 FT** (0,49 NM), die Stufe, die
+  den 0,5 NM der beiden Airbus-Profile am nächsten kommt.
 - **Annahme:** Der Knopf bleibt am Ende stehen und springt nicht vom kleinsten auf den größten
   Bereich. So verhalten sich der echte Pro-Line-Fusion-Knopf und das MSFS Avionics Framework,
   auf dem die A220-Displays aufbauen. Im Sim nachgeprüft ist es nicht.
 - **Voraussetzung: eine Flughafenkarte.** Synaptic bringt sie ab v1.0.10 selbst mit („Full
   airport moving map with Navigraph nav data“, „Runways-only airport moving map with native nav
-  data“, [Changelog](https://docs.synapticsim.com/changelog), angekündigt für den 25.09.2026).
-  Bis v1.0.9 zeigt die MAP in diesen Bereichen „AIRPORT MAP FAULT“.
+  data“, [Changelog](https://docs.synapticsim.com/changelog), erschienen am 25.09.2026).
+  Bis v1.0.9 zeigt die MAP in diesen Bereichen „AIRPORT MAP FAULT“. Ob v1.0.10 dieselben
+  Kartenbereiche hat, sagt der Changelog nicht; die Beschriftungen oben stammen aus v1.0.9.
 - **Mit AMDB Bridge** (Paket `zzz-amdb-a220-amm`): Diese Karte legt sich laut ihrem Quellcode
   genau auf das Display, das „AIRPORT MAP FAULT“ zeigt, und folgt dessen Range-Knopf
   (1000/2000/3000 FT, 1 NM). Sie erscheint unter 100 ft und am Boden, solange
-  `L:AMDB_AMM_VISIBLE` auf 0 (automatisch) steht. Das Addon dreht den Knopf auf 1 NM, damit
+  `L:AMDB_AMM_VISIBLE` auf 0 (automatisch) steht. Das Addon dreht den Knopf auf 3000 FT, damit
   erscheint auch diese Karte
   ([`amdb-a220-amm.js`](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB/blob/main/packages/msfs-a220-amm/html_ui/Pages/VCockpit/Instruments/a22x/DisplayUnits/amdb-a220-amm.js)).
 - Der echte A220 zeigt die Karte nach der Landung nicht automatisch; das Addon ergänzt das
@@ -124,7 +137,9 @@ bleibt er `0`, obwohl die Karten später vielleicht kommen. Erkannt wird der A38
 ## Was sich nicht vorab prüfen ließ
 
 Das Addon wird mit Compiler und Linker aus dem offiziellen MSFS 2024 SDK 1.7.3 gebaut und
-seine Logik mit Host-Tests geprüft. In einem laufenden Simulator konnte es hier nicht getestet
-werden. Offen bleibt deshalb nur, was die Flugzeuge intern tun: vor allem die Annahme zum
-A220-Knopf und dass die A220-Karte mit v1.0.10 so kommt wie angekündigt. Was im Sim wirklich
-passiert, steht in `oans_autozoom.log` (siehe README, Fehlersuche).
+seine Logik mit Host-Tests geprüft. Im Simulator getestet ist bisher der FBW A380X (MSFS 2024,
+AMDB Bridge): Das Umschalten funktioniert. iniBuilds A350 und Synaptic A220 sind im Sim noch
+nicht getestet. Offen bleibt dort, was die Flugzeuge intern tun: vor allem die Annahme zum
+A220-Knopf, ob v1.0.10 dieselben Kartenbereiche hat, und wann die eingebaute Autozoom-Option
+des A350 greift. Was im Sim wirklich passiert, steht in `oans_autozoom.log` (siehe README,
+Fehlersuche).
