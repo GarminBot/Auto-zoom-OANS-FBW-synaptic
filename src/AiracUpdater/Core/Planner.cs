@@ -20,6 +20,12 @@ namespace AiracUpdater.Core
                 }
 
                 NavDataSet data = Choose(profile, dataSets, profiles);
+                if (target.Problem != null)
+                {
+                    items.Add(new PlanItem(target, data, PlanState.NotReady, target.Problem));
+                    continue;
+                }
+
                 if (data == null)
                 {
                     items.Add(new PlanItem(target, null, PlanState.NoData, "keine passenden Daten in der ZIP"));
@@ -80,15 +86,21 @@ namespace AiracUpdater.Core
                 .First();
         }
 
-        private static int Score(NavDataSet data, IReadOnlyList<string> own, IReadOnlyList<string> others)
+        /// <summary>
+        /// 0: the folder names another add-on more precisely than this one; 1: names no add-on;
+        /// above 2: names this add-on, the longer (more specific) the matching word the better.
+        /// </summary>
+        private static double Score(NavDataSet data, IReadOnlyList<string> own, IReadOnlyList<string> others)
         {
             string path = data.DisplayPath.ToLowerInvariant();
-            if (own.Any(k => path.Contains(k.ToLowerInvariant())))
+            int ownLength = own.Where(k => path.Contains(k.ToLowerInvariant())).Select(k => k.Length).DefaultIfEmpty(0).Max();
+            int otherLength = others.Where(k => path.Contains(k.ToLowerInvariant())).Select(k => k.Length).DefaultIfEmpty(0).Max();
+            if (ownLength == 0 && otherLength == 0)
             {
-                return 2;
+                return 1;
             }
 
-            return others.Any(k => path.Contains(k.ToLowerInvariant())) ? 0 : 1;
+            return ownLength > otherLength ? 2 + ownLength / 100.0 : 0;
         }
     }
 }

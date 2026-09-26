@@ -34,7 +34,7 @@ namespace AiracUpdater.Core
     /// <summary>One place on this PC where an add-on (or the simulator) expects its navdata.</summary>
     public sealed class AddonTarget
     {
-        public AddonTarget(AddonProfile profile, SimInstallation sim, string name, string targetPath, AiracCycle? installedCycle, int installedRevision, string details)
+        public AddonTarget(AddonProfile profile, SimInstallation sim, string name, string targetPath, AiracCycle? installedCycle, int installedRevision, string details, string problem = null)
         {
             Profile = profile;
             Sim = sim;
@@ -43,6 +43,7 @@ namespace AiracUpdater.Core
             InstalledCycle = installedCycle;
             InstalledRevision = installedRevision;
             Details = details;
+            Problem = problem;
         }
 
         public AddonProfile Profile { get; }
@@ -62,6 +63,9 @@ namespace AiracUpdater.Core
 
         /// <summary>Extra information for the details view (package folder etc.).</summary>
         public string Details { get; }
+
+        /// <summary>Why the target cannot receive data right now (null if it can).</summary>
+        public string Problem { get; }
 
         /// <summary>Stable key for backups and settings.</summary>
         public string Key => Profile.Id + "|" + TargetPath;
@@ -93,6 +97,9 @@ namespace AiracUpdater.Core
 
         /// <summary>Add-on without own navdata; it uses another target (e.g. the simulator's data).</summary>
         Covered,
+
+        /// <summary>Installed, but the target folder is not usable yet (see AddonTarget.Problem).</summary>
+        NotReady,
     }
 
     public sealed class PlanItem
@@ -117,7 +124,7 @@ namespace AiracUpdater.Core
         /// <summary>Whether "Alle aktualisieren" installs this item.</summary>
         public bool Selected { get; set; }
 
-        public bool CanInstall => Data != null && State != PlanState.NoData && State != PlanState.Covered;
+        public bool CanInstall => Data != null && State != PlanState.NoData && State != PlanState.Covered && State != PlanState.NotReady;
     }
 
     public sealed class InstallResult

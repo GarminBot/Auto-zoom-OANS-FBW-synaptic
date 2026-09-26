@@ -75,16 +75,21 @@ namespace AiracUpdater.Core
         {
             get
             {
-                foreach (string official in new[] { "Official2024", "Official" })
+                // MSFS 2024 keeps its own marketplace content in Official2024 and carried-over 2020
+                // content in Official2020; MSFS 2020 uses Official.
+                string[] roots = Version == SimVersion.Msfs2024 ? new[] { "Official2024", "Official2020" } : new[] { "Official" };
+                foreach (string official in roots)
                 {
-                    string root = Path.Combine(PackagesPath, official);
                     foreach (string sub in new[] { "OneStore", "Steam" })
                     {
-                        yield return Path.Combine(root, sub);
+                        yield return Path.Combine(PackagesPath, official, sub);
                     }
                 }
             }
         }
+
+        /// <summary>MSFS 2024 marketplace packages that are streamed: StreamedPackages\fs24-&lt;package&gt;.</summary>
+        public string StreamedPackagesFolder => Version == SimVersion.Msfs2024 ? Path.Combine(PackagesPath, "StreamedPackages") : null;
 
         /// <summary>
         /// Folders whose sub-folders are the per-package "work" roots: &lt;root&gt;\&lt;package&gt;\work.
@@ -104,7 +109,7 @@ namespace AiracUpdater.Core
             }
         }
 
-        /// <summary>Finds an installed package folder by name in Community or Official folders.</summary>
+        /// <summary>Finds an installed package folder by name in Community, Official or streamed folders.</summary>
         public string FindPackage(string packageName)
         {
             foreach (string folder in CommunityFolders.Concat(OfficialFolders))
@@ -113,6 +118,39 @@ namespace AiracUpdater.Core
                 if (found != null)
                 {
                     return found;
+                }
+            }
+
+            return StreamedPackagesFolder == null ? null : FileTools.FindDirectory(StreamedPackagesFolder, "fs24-" + packageName);
+        }
+
+        /// <summary>
+        /// The existing work folder of a package. MSFS creates it when the aircraft is loaded for the
+        /// first time; like Navigraph Hub, the tool only uses an existing one.
+        /// </summary>
+        public string FindWorkFolder(string packageName)
+        {
+            foreach (string root in WorkRoots)
+            {
+                string package = FileTools.FindDirectory(root, packageName);
+                string work = package == null ? null : FileTools.FindDirectory(package, "work");
+                if (work != null)
+                {
+                    return work;
+                }
+            }
+
+            if (Version == SimVersion.Msfs2024)
+            {
+                // Any other WASM generation folder (WASM\*\<package>\work).
+                foreach (string generation in FileTools.SafeDirectories(Path.Combine(LocalState, "WASM")))
+                {
+                    string package = FileTools.FindDirectory(generation, packageName);
+                    string work = package == null ? null : FileTools.FindDirectory(package, "work");
+                    if (work != null)
+                    {
+                        return work;
+                    }
                 }
             }
 
@@ -135,10 +173,6 @@ namespace AiracUpdater.Core
                 }
             }
         }
-
-        /// <summary>The work folder of a package, e.g. ...\WASM\MSFS2024\pmdg-aircraft-738\work (may not exist yet).</summary>
-        public IEnumerable<string> WorkFolderCandidates(string packageName) =>
-            WorkRoots.Select(root => Path.Combine(root, packageName, "work"));
 
         public override string ToString() => Name + ": " + PackagesPath;
 

@@ -150,6 +150,7 @@ namespace AiracUpdater.Gui
             list.Columns.Add("Installiert", 85);
             list.Columns.Add("In der ZIP", 85);
             list.Columns.Add("Status", 300);
+            list.ContextMenuStrip = BuildContextMenu();
             list.ItemCheck += OnItemCheck;
             list.ItemChecked += OnItemChecked;
             list.Resize += (s, e) => FitLastColumn();
@@ -567,7 +568,7 @@ namespace AiracUpdater.Gui
         {
             if (!haveInput)
             {
-                return item.State == PlanState.Covered ? 1 : 0;
+                return item.State == PlanState.NotReady ? 1 : item.State == PlanState.Covered ? 2 : 0;
             }
 
             switch (item.State)
@@ -575,9 +576,10 @@ namespace AiracUpdater.Gui
                 case PlanState.Update: return 0;
                 case PlanState.Unknown: return 1;
                 case PlanState.Older: return 2;
-                case PlanState.UpToDate: return 3;
-                case PlanState.NoData: return 4;
-                default: return 5;
+                case PlanState.NotReady: return 3;
+                case PlanState.UpToDate: return 4;
+                case PlanState.NoData: return 5;
+                default: return 6;
             }
         }
 
@@ -586,6 +588,11 @@ namespace AiracUpdater.Gui
             if (item.State == PlanState.Covered)
             {
                 return "Ohne eigene Navdaten";
+            }
+
+            if (item.State == PlanState.NotReady)
+            {
+                return "Noch nicht bereit";
             }
 
             if (!haveInput)
@@ -610,7 +617,7 @@ namespace AiracUpdater.Gui
                 return (result.Success ? "✓ " : "✗ ") + result.Message;
             }
 
-            if (item.State == PlanState.Covered)
+            if (item.State == PlanState.Covered || item.State == PlanState.NotReady)
             {
                 return item.Message;
             }
@@ -623,6 +630,11 @@ namespace AiracUpdater.Gui
             if (result != null)
             {
                 return result.Success ? OkColor : ErrorColor;
+            }
+
+            if (item.State == PlanState.NotReady)
+            {
+                return WarnColor;
             }
 
             if (!haveInput)
@@ -642,6 +654,77 @@ namespace AiracUpdater.Gui
                 default:
                     return MutedColor;
             }
+        }
+
+        private ContextMenuStrip BuildContextMenu()
+        {
+            var menu = new ContextMenuStrip();
+            ToolStripItem open = menu.Items.Add("Zielordner öffnen");
+            ToolStripItem restore = menu.Items.Add("Sicherung zurückspielen …");
+            menu.Opening += (s, e) =>
+            {
+                PlanItem item = SelectedItem();
+                if (item == null)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                open.Enabled = Directory.Exists(item.Target.TargetPath) || File.Exists(item.Target.TargetPath);
+                restore.Enabled = !busy && item.Target.Profile.Format != null && session.Context != null
+                    && item.Target.Profile.HasBackup(item.Target, session.Context);
+            };
+            open.Click += (s, e) => OpenFolder(SelectedItem()?.Target.TargetPath);
+            restore.Click += async (s, e) => await RestoreAsync(SelectedItem());
+            return menu;
+        }
+
+        private PlanItem SelectedItem() =>
+            list.SelectedItems.Count > 0 ? list.SelectedItems[0].Tag as PlanItem : null;
+
+        private async Task RestoreAsync(PlanItem item)
+        {
+            if (item == null || busy)
+            {
+                return;
+            }
+
+            List<string> running = Blockers.Running();
+            if (running.Count > 0)
+            {
+                MessageBox.Show(this, "Bitte zuerst beenden: " + string.Join(", ", running) + ".", "Simulator läuft noch", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (MessageBox.Show(
+                    this,
+                    "Die gesicherten Daten von \"" + item.Target.Name + "\" zurückspielen? Die jetzigen Daten werden dabei ersetzt.",
+                    "Sicherung zurückspielen",
+                    MessageBoxButtons.OKCancel,
+                    MessageBoxIcon.Question) != DialogResult.OK)
+            {
+                return;
+            }
+
+            SetBusy(true, "Spiele Sicherung zurück …");
+            try
+            {
+                var options = new InstallOptions(session.Context, false, line => log.Write(line));
+                log.Write(item.Target.Name + ": Sicherung zurückspielen");
+                await Task.Run(() => item.Target.Profile.RestoreBackup(item.Target, options));
+                log.Write("  zurückgespielt");
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                log.Write("  FEHLER: " + e.Message);
+                MessageBox.Show(this, e.Message, "Sicherung zurückspielen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                SetBusy(false, null);
+            }
+
+            await RefreshAsync();
         }
 
         private void OnItemCheck(object sender, ItemCheckEventArgs e)
@@ -738,6 +821,16 @@ namespace AiracUpdater.Gui
         {
             string folder = session.Folders.ToolData;
             Directory.CreateDirectory(folder);
+            OpenFolder(folder);
+        }
+
+        private void OpenFolder(string folder)
+        {
+            if (string.IsNullOrEmpty(folder))
+            {
+                return;
+            }
+
             try
             {
                 Process.Start(new ProcessStartInfo("explorer.exe", "\"" + folder + "\"") { UseShellExecute = true });

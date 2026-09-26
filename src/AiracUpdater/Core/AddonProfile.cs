@@ -75,6 +75,22 @@ namespace AiracUpdater.Core
             FolderSwap.Replace(data.ContentPath, target.TargetPath, backup, options.Log);
         }
 
+        /// <summary>True if an earlier update kept the data it replaced.</summary>
+        public virtual bool HasBackup(AddonTarget target, ToolContext context) =>
+            FileTools.HasAnyEntry(BackupFolder(target, context));
+
+        /// <summary>Puts the kept data back (the backup itself stays).</summary>
+        public virtual void RestoreBackup(AddonTarget target, InstallOptions options)
+        {
+            string backup = BackupFolder(target, options.Context);
+            if (!FileTools.HasAnyEntry(backup))
+            {
+                throw new IOException("Keine Sicherung vorhanden für " + target.Name + ".");
+            }
+
+            FolderSwap.Replace(backup, target.TargetPath, null, options.Log);
+        }
+
         /// <summary>Reads the cycle that is installed at a target right now.</summary>
         public virtual AiracCycle? ReadInstalledCycle(AddonTarget target, out int revision) =>
             ReadCycle(target.TargetPath, out revision);
