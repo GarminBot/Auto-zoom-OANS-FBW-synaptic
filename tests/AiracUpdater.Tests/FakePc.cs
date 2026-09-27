@@ -94,6 +94,14 @@ namespace AiracUpdater.Tests
             }
         }
 
+        /// <summary>Navigraph Navigation Data Interface data, as iniBuilds aircraft download it.</summary>
+        public static void WriteNdiData(string folder, string cycle)
+        {
+            WriteFile(Path.Combine(folder, "db.s3db"), "SQLite format 3\0 NG_FWDFD " + cycle);
+            WriteFile(Path.Combine(folder, "cycle.json"),
+                "{\"cycle\":\"" + cycle + "\",\"revision\":\"1\",\"name\":\"Navigraph Avionics\",\"format\":\"dfdv2\",\"validityPeriod\":\"2025-10-02/2025-10-29\"}");
+        }
+
         /// <summary>PMDG navdata as Navigraph Hub leaves it: database, cycle.json and cycle_info.txt.</summary>
         public static void WritePmdgData(string folder, string cycle, string revision = "1")
         {

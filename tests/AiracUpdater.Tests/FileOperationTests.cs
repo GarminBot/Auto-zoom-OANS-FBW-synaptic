@@ -27,14 +27,41 @@ namespace AiracUpdater.Tests
         }
 
         [Fact]
-        public void AcceptsAFolderInsteadOfAZip()
+        public void ReadsAFolderInPlace()
         {
             using var dir = new TempDir();
             dir.Write("in/A/file.txt", "a");
             using InputFolder input = InputFolder.Open(dir.Combine("in"), dir.Combine("tmp"));
-            Assert.True(File.Exists(Path.Combine(input.Root, "A", "file.txt")));
-            // The user's folder itself is never touched.
+            Assert.Equal(Path.GetFullPath(dir.Combine("in")), input.Root);
+            input.Dispose();
+            // Closing removes only the tool's own temporary folder.
             Assert.True(dir.Exists("in/A/file.txt"));
+        }
+
+        [Fact]
+        public void CopiesAFolderWithZipsBeforeUnpackingThem()
+        {
+            using var dir = new TempDir();
+            dir.Write("inner/x.txt", "x");
+            dir.Zip("inner", "in/A/data.zip");
+            using InputFolder input = InputFolder.Open(dir.Combine("in"), dir.Combine("tmp"));
+            Assert.True(File.Exists(Path.Combine(input.Root, "A", "data", "x.txt")));
+            // The user's folder keeps its ZIP and gets no unpacked copy.
+            Assert.True(dir.Exists("in/A/data.zip"));
+            Assert.False(dir.Exists("in/A/data"));
+        }
+
+        [Fact]
+        public void ReadsUserCfgInTheWindowsCodePage()
+        {
+            using var dir = new TempDir();
+            string file = dir.Combine("UserCfg.opt");
+            File.WriteAllBytes(file, System.Text.Encoding.Latin1.GetBytes("InstalledPackagesPath \"C:\\Users\\J\u00fcrgen\\MSFS\"\r\n"));
+            // In .NET Framework on Windows the fallback is the system code page (e.g. 1252).
+            string path = SimInstallation.ReadPackagesPath(file, System.Text.Encoding.Latin1);
+            Assert.Equal("C:\\Users\\J\u00fcrgen\\MSFS", path);
+            Assert.StartsWith("C:\\Users\\J", path);
+            Assert.DoesNotContain("\uFFFD", path);
         }
 
         [Fact]
@@ -126,6 +153,18 @@ namespace AiracUpdater.Tests
             Assert.True(dir.Exists("target/T/a.txt"));
             Assert.Equal("old", dir.Read("backup/b.txt"));
             Assert.Single(Directory.GetDirectories(dir.Combine("target")));
+        }
+
+        [Fact]
+        public void AFailedCopyLeavesTheTargetAndNoHalfCopy()
+        {
+            using var dir = new TempDir();
+            dir.Write("target/T/b.txt", "old");
+            // A source that cannot be copied: the copy fails part way.
+            Assert.ThrowsAny<IOException>(() => FolderSwap.Replace(dir.Combine("does-not-exist"), dir.Combine("target", "T"), dir.Combine("backup"), null));
+            Assert.Equal("old", dir.Read("target/T/b.txt"));
+            Assert.Single(Directory.GetDirectories(dir.Combine("target")));
+            Assert.False(dir.Exists("backup"));
         }
 
         [Fact]

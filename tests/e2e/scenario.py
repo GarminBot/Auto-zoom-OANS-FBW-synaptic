@@ -94,8 +94,14 @@ def setup(p):
     pmdg_data(p["localstate"] / "WASM" / "MSFS2024" / "pmdg-aircraft-738" / "work" / "NavigationData", "2508")
     pmdg_data(p["localstate"] / "WASM" / "MSFS2024" / "pmdg-aircraft-77w" / "work" / "NavigationData", "2508")
     # The 777F was never loaded: no work folder yet.
+    # The Airbus fleet: FBW reads the simulator's navdata; iniBuilds and Synaptic do in their
+    # "sim default"/"native" mode (the A380 comes from the Marketplace).
     package(community, "flybywire-aircraft-a380-842", "FlyByWire A380X")
     package(community, "inibuilds-aircraft-a350", "iniBuilds A350")
+    package(community, "inibuilds-aircraft-a340", "iniBuilds A340")
+    package(p["packages"] / "Official2024" / "OneStore", "inibuilds-aircraft-a380", "iniBuilds A380")
+    package(community, "inibuilds-aircraft-a220", "A220")
+    (community / "inibuilds-aircraft-a220" / "SimObjects" / "Airplanes" / "Synaptic_A220").mkdir(parents=True)
 
     # Input: one folder per add-on, the PMDG data as a ZIP inside the ZIP.
     staging = p["downloads"] / "staging"
@@ -132,7 +138,8 @@ def verify(p, cycle="2510"):
         "community clean": sorted(x.name for x in community.iterdir()) == sorted([
             "navigraph-nav-base", "navigraph-nav-jepp", "fnx-aircraft-320", "fnx-aircraft-319-321",
             "pmdg-aircraft-738", "pmdg-aircraft-77w", "pmdg-aircraft-77f",
-            "flybywire-aircraft-a380-842", "inibuilds-aircraft-a350"]),
+            "flybywire-aircraft-a380-842", "inibuilds-aircraft-a350", "inibuilds-aircraft-a340",
+            "inibuilds-aircraft-a220"]),
         "sim backup on D:": (p["packages"] / "AIRAC-Updater" / "backup" / "msfs2024-navdata" / "navigraph-nav-jepp" / "manifest.json").exists(),
         "pmdg/fenix backups": len(list((p["local"] / "AIRAC-Updater" / "Backups").iterdir())) == 3,
         "no leftovers": not list(p["localstate"].rglob("*.airac-new")) and not list(p["localstate"].rglob("*.airac-old"))

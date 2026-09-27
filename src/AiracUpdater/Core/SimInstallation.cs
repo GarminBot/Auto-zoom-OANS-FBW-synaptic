@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace AiracUpdater.Core
@@ -211,11 +212,20 @@ namespace AiracUpdater.Core
             result.Add(new SimInstallation(version, simStore, userCfg, packages, localState));
         }
 
-        public static string ReadPackagesPath(string userCfgPath)
+        /// <param name="fallback">Encoding for files that are not UTF-8; default: the Windows code page.</param>
+        public static string ReadPackagesPath(string userCfgPath, Encoding fallback = null)
         {
             try
             {
-                Match match = PackagesPathLine.Match(File.ReadAllText(userCfgPath));
+                byte[] bytes = File.ReadAllBytes(userCfgPath);
+                string text = Encoding.UTF8.GetString(bytes);
+                if (text.IndexOf('\uFFFD') >= 0)
+                {
+                    // Not UTF-8: a path such as C:\Users\Jürgen written in the Windows code page.
+                    text = (fallback ?? Encoding.Default).GetString(bytes);
+                }
+
+                Match match = PackagesPathLine.Match(text);
                 return match.Success ? match.Groups[1].Value.Trim() : null;
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)

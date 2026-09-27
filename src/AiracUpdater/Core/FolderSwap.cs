@@ -48,7 +48,18 @@ namespace AiracUpdater.Core
             }
 
             log("kopiere neue Daten nach " + staging);
-            long bytes = FileTools.CopyDirectory(source, staging);
+            long bytes;
+            try
+            {
+                bytes = FileTools.CopyDirectory(source, staging);
+            }
+            catch
+            {
+                // E.g. disk full: the target is untouched, remove the half copy.
+                TryDelete(staging);
+                throw;
+            }
+
             log("  " + FileTools.FormatBytes(bytes) + " kopiert");
 
             bool hadOld = Directory.Exists(target);

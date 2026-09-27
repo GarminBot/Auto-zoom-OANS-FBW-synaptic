@@ -18,6 +18,14 @@ namespace AiracUpdater.Core
             DataFolder = dataFolder;
         }
 
+        /// <summary>
+        /// Shown instead of "no data in the ZIP" when the aircraft can also run on the simulator's
+        /// navdata (iniBuilds "SIM DEFAULT").
+        /// </summary>
+        public string FallbackMessage { get; set; }
+
+        public override string CoveredBy => FallbackMessage;
+
         public string PackageName { get; }
 
         /// <summary>Sub-folder of "work" that holds the data, e.g. "NavigationData".</summary>

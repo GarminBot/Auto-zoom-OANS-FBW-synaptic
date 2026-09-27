@@ -287,8 +287,7 @@ namespace AiracUpdater.Gui
                 simLabel.Text = "Simulator: " + string.Join(", ", session.Context.Sims.Select(s => s.Name + " – " + s.PackagesPath));
             }
 
-            int own = session.Targets.Count(t => t.Profile.Format != null);
-            log.Write(session.Targets.Count + " Addons gefunden, davon " + own + " mit eigenen Navdaten.");
+            log.Write(session.Targets.Count + " Addons gefunden: " + string.Join(", ", session.Targets.Select(t => t.Name).Distinct()));
         }
 
         private void ChooseZip()
@@ -533,8 +532,9 @@ namespace AiracUpdater.Gui
                 }
 
                 bool haveInput = session.InputPath != null;
+                // Just updated first, then what can be updated, then the rest.
                 IEnumerable<PlanItem> ordered = session.Items
-                    .OrderBy(i => GroupOrder(i, haveInput))
+                    .OrderBy(i => lastResults.ContainsKey(i) ? -1 : GroupOrder(i, haveInput))
                     .ThenBy(i => i.Target.Name, StringComparer.CurrentCultureIgnoreCase);
                 foreach (PlanItem item in ordered)
                 {
@@ -544,7 +544,7 @@ namespace AiracUpdater.Gui
                     {
                         Tag = item,
                         Checked = haveInput && item.Selected && item.CanInstall,
-                        Group = Group(GroupName(item, haveInput)),
+                        Group = Group(result == null ? GroupName(item, haveInput) : result.Success ? "Gerade aktualisiert" : "Fehler"),
                         UseItemStyleForSubItems = false,
                         ToolTipText = item.Target.TargetPath + (string.IsNullOrEmpty(item.Target.Details) ? string.Empty : "\n" + item.Target.Details),
                     };
@@ -553,6 +553,7 @@ namespace AiracUpdater.Gui
                     row.SubItems.Add(item.Data?.CycleText ?? "–");
                     ListViewItem.ListViewSubItem statusItem = row.SubItems.Add(status);
                     statusItem.ForeColor = StatusColor(item, haveInput, result);
+
                     if (item.State == PlanState.Covered || item.State == PlanState.NoData)
                     {
                         row.ForeColor = MutedColor;

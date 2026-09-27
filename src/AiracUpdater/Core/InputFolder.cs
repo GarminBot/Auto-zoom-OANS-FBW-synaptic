@@ -39,6 +39,13 @@ namespace AiracUpdater.Core
                 string root = Path.Combine(work, "input");
                 if (Directory.Exists(path))
                 {
+                    if (!ContainsZip(path))
+                    {
+                        // Read the folder where it is; it is only ever read, never changed.
+                        return new InputFolder(Path.GetFullPath(path), work, path);
+                    }
+
+                    // ZIPs inside get unpacked next to themselves, so work on a copy.
                     status?.Invoke("Kopiere Ordner " + path);
                     FileTools.CopyDirectory(path, root);
                 }
@@ -105,6 +112,9 @@ namespace AiracUpdater.Core
                     + " oder den entpackten Ordner wählen.", e);
             }
         }
+
+        private static bool ContainsZip(string directory) =>
+            Directory.EnumerateFiles(directory, "*.zip", SearchOption.AllDirectories).Any();
 
         private static bool IsMacMetadata(string relative) =>
             relative.StartsWith("__MACOSX/", StringComparison.OrdinalIgnoreCase)

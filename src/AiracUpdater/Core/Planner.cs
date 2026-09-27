@@ -20,6 +20,13 @@ namespace AiracUpdater.Core
                 }
 
                 NavDataSet data = Choose(profile, dataSets, profiles);
+                if (data == null && profile.CoveredBy != null)
+                {
+                    // Nothing of its own in the ZIP, but it works with the simulator's navdata.
+                    items.Add(new PlanItem(target, null, PlanState.Covered, profile.CoveredBy));
+                    continue;
+                }
+
                 if (target.Problem != null)
                 {
                     items.Add(new PlanItem(target, data, PlanState.NotReady, target.Problem));

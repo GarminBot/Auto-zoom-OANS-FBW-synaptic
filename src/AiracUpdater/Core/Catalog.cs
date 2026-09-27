@@ -36,13 +36,19 @@ namespace AiracUpdater.Core
             null,
             new[] { "cycle.json", "cycle_info.txt" });
 
+        /// <summary>iniBuilds A350/A340/A380 in "NAVIGRAPH" mode: Navigraph's Navigation Data Interface.</summary>
+        public static readonly NdiFormat Ndi = new NdiFormat();
+
         public static IReadOnlyList<NavDataFormat> Formats { get; } = new List<NavDataFormat>
         {
             Msfs2024,
             Msfs2020,
             Fenix,
             Pmdg,
+            Ndi,
         };
+
+        private const string UsesSimData = "nutzt die MSFS-Navdaten (Zeile „MSFS Standard-Navdaten“)";
 
         public static IReadOnlyList<AddonProfile> Profiles { get; } = BuildProfiles();
 
@@ -70,6 +76,29 @@ namespace AiracUpdater.Core
                 ("pmdg-aircraft-77f", "PMDG 777F", new[] { "777f", "777-f", "77f", "777" }),
             };
             profiles.AddRange(pmdg.Select(p => new WorkFolderProfile(p.Package, p.Name, Pmdg, p.Package, "NavigationData", p.Keywords)));
+
+            // FlyByWire reads only the simulator's navdata (docs.flybywiresim.com, Navigraph).
+            profiles.Add(new CoveredAircraftProfile("fbw-a380x", "FlyByWire A380X", UsesSimData,
+                new[] { "flybywire-aircraft-a380-842" }, new[] { "FlyByWire_A380X", "FlyByWire_A380_842" }));
+
+            // iniBuilds: EFB/OIS "3rd party" navdata source SIM DEFAULT (simulator data) or NAVIGRAPH
+            // (downloaded in the aircraft through the NDI into work\NavigationData).
+            (string Package, string Name, string[] Keywords)[] inibuilds =
+            {
+                ("inibuilds-aircraft-a350", "iniBuilds A350", new[] { "a350" }),
+                ("inibuilds-aircraft-a340", "iniBuilds A340", new[] { "a340" }),
+                ("inibuilds-aircraft-a380", "iniBuilds A380", new[] { "a380" }),
+            };
+            profiles.AddRange(inibuilds.Select(p => new WorkFolderProfile(p.Package, p.Name, Ndi, p.Package, "NavigationData", p.Keywords)
+            {
+                FallbackMessage = "nutzt die MSFS-Navdaten, wenn im EFB „SIM DEFAULT“ gewählt ist",
+            }));
+
+            // Synaptic: MKP MENU > DATA > DATALOAD, NATIVE (simulator data) or NAVIGRAPH (own login,
+            // storage not documented). Package name not certain, so also look for its SimObjects folder.
+            profiles.Add(new CoveredAircraftProfile("synaptic-a220", "Synaptic A220",
+                "nutzt die MSFS-Navdaten, wenn im MKP (DATALOAD) „NATIVE“ gewählt ist",
+                new[] { "inibuilds-aircraft-a220", "synaptic-aircraft-a220" }, new[] { "Synaptic_A220" }));
 
             return profiles;
         }
