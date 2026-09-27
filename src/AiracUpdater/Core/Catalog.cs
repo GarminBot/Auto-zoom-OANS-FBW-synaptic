@@ -51,9 +51,9 @@ namespace AiracUpdater.Core
             var profiles = new List<AddonProfile>
             {
                 // The 2025 beta installed the packages with sort prefixes; Navigraph asks to delete them.
-                new SimNavdataProfile("msfs2024-navdata", "Simulator-Navdaten (Standardflugzeuge)", Msfs2024,
+                new SimNavdataProfile("msfs2024-navdata", "MSFS Standard-Navdaten", Msfs2024,
                     new[] { "!!!navigraph-nav-base", "}}}navigraph-nav-jepp" }),
-                new SimNavdataProfile("msfs2020-navdata", "Simulator-Navdaten (Standardflugzeuge)", Msfs2020, null),
+                new SimNavdataProfile("msfs2020-navdata", "MSFS Standard-Navdaten", Msfs2020, null),
                 new FenixProfile(Fenix),
             };
 

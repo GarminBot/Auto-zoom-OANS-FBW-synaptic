@@ -39,7 +39,7 @@ namespace AiracUpdater.Core
                 {
                     string expected = Path.Combine(sim.WorkRoots.First(), PackageName, "work", DataFolder);
                     yield return new AddonTarget(this, sim, Name, expected, null, 0, details,
-                        "Flugzeug einmal im Simulator laden (es fehlt noch der work-Ordner), dann „Neu prüfen“");
+                        "erst einmal im Simulator laden, dann „Neu prüfen“");
                     continue;
                 }
 

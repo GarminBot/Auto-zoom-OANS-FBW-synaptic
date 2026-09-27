@@ -42,6 +42,8 @@ namespace AiracUpdater.Gui
         private readonly Dictionary<PlanItem, InstallResult> lastResults = new Dictionary<PlanItem, InstallResult>();
         private bool busy;
         private bool filling;
+        private string loadedStatus;
+        private string lastDiscovery;
 
         public MainForm(string input)
         {
@@ -145,8 +147,8 @@ namespace AiracUpdater.Gui
             list.ShowItemToolTips = true;
             list.HeaderStyle = ColumnHeaderStyle.Nonclickable;
             list.Dock = DockStyle.Fill;
-            list.Columns.Add("Addon", 250);
-            list.Columns.Add("Simulator", 130);
+            list.Columns.Add("Addon", 240);
+            list.Columns.Add("Simulator", 125);
             list.Columns.Add("Installiert", 85);
             list.Columns.Add("In der ZIP", 85);
             list.Columns.Add("Status", 300);
@@ -163,7 +165,7 @@ namespace AiracUpdater.Gui
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            updateButton.Text = "Alle aktualisieren";
+            updateButton.Text = "&Alle aktualisieren";
             updateButton.Font = new Font(Font.FontFamily, Font.Size * 1.15f, FontStyle.Bold);
             updateButton.AutoSize = true;
             updateButton.Padding = new Padding(14, 4, 14, 4);
@@ -263,6 +265,13 @@ namespace AiracUpdater.Gui
 
         private void LogDiscovery()
         {
+            string discovery = string.Join("|", session.Context.Sims.Select(s => s.ToString())) + "|" + string.Join("|", session.Targets.Select(t => t.Key));
+            if (discovery == lastDiscovery)
+            {
+                return;
+            }
+
+            lastDiscovery = discovery;
             if (session.Context.Sims.Count == 0)
             {
                 log.Write("Kein Microsoft Flight Simulator gefunden (UserCfg.opt fehlt).");
@@ -356,6 +365,9 @@ namespace AiracUpdater.Gui
                 {
                     log.Write("  Hinweis: " + note);
                 }
+
+                int updates = session.Items.Count(i => i.Selected && i.CanInstall);
+                loadedStatus = session.DataSets.Count + " Datensätze in der ZIP, " + (updates == 0 ? "nichts zu tun" : updates + " Addon(s) bereit");
             }
             catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException || e is NotSupportedException || e is ArgumentException)
             {
@@ -364,7 +376,8 @@ namespace AiracUpdater.Gui
             }
             finally
             {
-                SetBusy(false, null);
+                SetBusy(false, loadedStatus ?? string.Empty);
+                loadedStatus = null;
             }
 
             FillList();
@@ -614,7 +627,7 @@ namespace AiracUpdater.Gui
         {
             if (result != null)
             {
-                return (result.Success ? "✓ " : "✗ ") + result.Message;
+                return (result.Success ? "Erledigt: " : "Fehler: ") + result.Message;
             }
 
             if (item.State == PlanState.Covered || item.State == PlanState.NotReady)
@@ -755,7 +768,7 @@ namespace AiracUpdater.Gui
         {
             int count = session.Items.Count(i => i.Selected && i.CanInstall);
             updateButton.Enabled = !busy && session.InputPath != null && count > 0;
-            updateButton.Text = count > 0 ? "Alle aktualisieren (" + count + ")" : "Alle aktualisieren";
+            updateButton.Text = count > 0 ? "&Alle aktualisieren (" + count + ")" : "&Alle aktualisieren";
         }
 
         private void SetBusy(bool value, string status)

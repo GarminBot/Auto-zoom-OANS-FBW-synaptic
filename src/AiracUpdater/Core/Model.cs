@@ -68,7 +68,7 @@ namespace AiracUpdater.Core
         /// <summary>Simulator column text; defaults to the simulator's name.</summary>
         public string SimLabel
         {
-            get => simLabel ?? Sim?.Name ?? "–";
+            get => simLabel ?? Sim?.CompactName ?? "–";
             set => simLabel = value;
         }
 

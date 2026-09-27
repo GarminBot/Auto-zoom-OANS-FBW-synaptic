@@ -56,6 +56,9 @@ namespace AiracUpdater.Core
 
         public string ShortName => Version == SimVersion.Msfs2024 ? "MSFS 2024" : "MSFS 2020";
 
+        /// <summary>For narrow columns: "MSFS 2024 Store" or "MSFS 2024 Steam".</summary>
+        public string CompactName => ShortName + (Store == SimStore.Steam ? " Steam" : " Store");
+
         /// <summary>Community folders in the order the tool prefers them for new packages.</summary>
         public IEnumerable<string> CommunityFolders
         {

@@ -177,7 +177,12 @@ namespace AiracUpdater.Core
                 return (bytes / (double)(1L << 20)).ToString("0", System.Globalization.CultureInfo.CurrentCulture) + " MB";
             }
 
-            return (bytes / 1024.0).ToString("0", System.Globalization.CultureInfo.CurrentCulture) + " KB";
+            if (bytes >= 1024)
+            {
+                return (bytes / 1024.0).ToString("0", System.Globalization.CultureInfo.CurrentCulture) + " KB";
+            }
+
+            return bytes + " Bytes";
         }
     }
 }
