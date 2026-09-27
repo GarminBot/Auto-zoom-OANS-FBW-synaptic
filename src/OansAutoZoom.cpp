@@ -17,7 +17,8 @@
 //   profile of the aircraft brings up the map, once. Afterwards the displays are left
 //   alone until the next flight; nothing happens on take-off.
 // - Commands are RPN (calculator code), the same mechanism MobiFlight/HubHop presets
-//   use. They are sent one per simulator frame, so no knob detent gets lost.
+//   use. They are sent at most one per simulator frame; the A220's knob detents at the
+//   pace of a hand on the knob (see its profile).
 // - Everything the module decides is written to the developer console and to
 //   oans_autozoom.log in the module's work folder (see kLogPath).
 //
@@ -45,7 +46,7 @@ namespace {
 // Log
 // ---------------------------------------------------------------------------
 
-constexpr const char* kVersion = "1.3.0";
+constexpr const char* kVersion = "1.4.0";
 constexpr const char* kLogPath = OANS_LOG_PATH;
 double g_secondsSinceStart = 0;  // simulator time since the module was loaded, from the Frame event
 
@@ -88,35 +89,72 @@ constexpr double kMinTouchdownGroundSpeedKts = 40.0;
 constexpr int kQueueCapacity = 256;
 constexpr int kMaxCommandLength = 96;
 
-char g_queue[kQueueCapacity][kMaxCommandLength];
+struct QueuedCommand {
+  float delaySeconds;  // how long after the previous command this one goes out
+  char text[kMaxCommandLength];
+};
+
+QueuedCommand g_queue[kQueueCapacity];
 int g_queueHead = 0;
 int g_queueCount = 0;
+double g_secondsSinceCommand = 0;
+// Set when a queued sequence ends by setting an L-var back that it set at its start (the A220's
+// hold on AMDB's map). If the queue is dropped half way, that last command is sent right away.
+const char* g_queueCleanupCommand = nullptr;
 
-// Queues one RPN command; the queue is drained one command per simulator frame.
-void queueCommand(const char* format, ...) {
+void queueCommandV(float delaySeconds, const char* format, va_list args) {
   if (g_queueCount == kQueueCapacity) {
     logLine("command queue full, dropping \"%s\"", format);
     return;
   }
-  va_list args;
-  va_start(args, format);
-  vsnprintf(g_queue[(g_queueHead + g_queueCount) % kQueueCapacity], kMaxCommandLength, format, args);
-  va_end(args);
+  QueuedCommand& entry = g_queue[(g_queueHead + g_queueCount) % kQueueCapacity];
+  entry.delaySeconds = delaySeconds;
+  vsnprintf(entry.text, sizeof(entry.text), format, args);
   ++g_queueCount;
 }
 
-void sendNextQueuedCommand() {
+// Queues one RPN command for the next simulator frame; the queue sends at most one per frame.
+void queueCommand(const char* format, ...) {
+  va_list args;
+  va_start(args, format);
+  queueCommandV(0, format, args);
+  va_end(args);
+}
+
+// Queues one RPN command that goes out delaySeconds after the previous one.
+void queueCommandAfter(float delaySeconds, const char* format, ...) {
+  va_list args;
+  va_start(args, format);
+  queueCommandV(delaySeconds, format, args);
+  va_end(args);
+}
+
+// Called once per simulator frame with the frame's duration.
+void sendNextQueuedCommand(double frameSeconds) {
+  g_secondsSinceCommand += frameSeconds;
   if (g_queueCount == 0) {
     return;
   }
-  const char* command = g_queue[g_queueHead];
-  logLine("send %s", command);
-  execute_calculator_code(command, nullptr, nullptr, nullptr);
+  const QueuedCommand& next = g_queue[g_queueHead];
+  if (g_secondsSinceCommand < next.delaySeconds) {
+    return;
+  }
+  g_secondsSinceCommand = 0;
+  logLine("send %s", next.text);
+  execute_calculator_code(next.text, nullptr, nullptr, nullptr);
   g_queueHead = (g_queueHead + 1) % kQueueCapacity;
   --g_queueCount;
+  if (g_queueCount == 0) {
+    g_queueCleanupCommand = nullptr;  // the sequence ran to its end
+  }
 }
 
 void clearQueue() {
+  if (g_queueCount > 0 && g_queueCleanupCommand != nullptr) {
+    logLine("sequence dropped, send %s", g_queueCleanupCommand);
+    execute_calculator_code(g_queueCleanupCommand, nullptr, nullptr, nullptr);
+  }
+  g_queueCleanupCommand = nullptr;
   g_queueHead = 0;
   g_queueCount = 0;
 }
@@ -337,24 +375,44 @@ bool iniA350ShowAirportMap(int step) {
 // detents up to 3000 FT (0.49 NM), the closest match to the 0.5 NM of the Airbus profiles. The
 // airport moving map itself needs Synaptic A220 v1.0.10 or newer (or AMDB Bridge's A220 map);
 // older versions show AIRPORT MAP FAULT at these ranges.
-constexpr int kA220DetentsToSmallestRange = 30;
+constexpr int kA220DetentsToSmallestRange = 20;
 constexpr int kA220DetentsSmallestTo3000Ft = 2;
-
-void a220QueueSide(int ctp) {
-  for (int i = 0; i < kA220DetentsToSmallestRange; ++i) {
-    queueCommand("(>H:A220_CTP_RANGE_%d_DEC)", ctp);
-  }
-  for (int i = 0; i < kA220DetentsSmallestTo3000Ft; ++i) {
-    queueCommand("(>H:A220_CTP_RANGE_%d_INC)", ctp);
-  }
-}
+// The detents go out 0.1 s apart, alternating between the two knobs, so each knob gets one
+// every 0.2 s, about the pace of a hand on the knob. Sent once per frame (up to version 1.3.0),
+// not all of them arrived: after a landing one side stood at 2000 FT, the other at 1000 FT.
+constexpr float kA220DetentSeconds = 0.1f;
+// A pause at the smallest range before turning back up: on the way down the display switches
+// over to the airport map.
+constexpr float kA220SettleSeconds = 1.0f;
+// AMDB Bridge's airport map for the A220 can be dragged away from the aircraft. While this L-var
+// is 1 it follows the aircraft again (amdb-a220-amm.js). The map reads it once it has been on
+// screen, so the L-var only exists then; the add-on holds it at 1 while turning the knobs (the
+// map only looks at it while it is showing) and sets it back to 0 afterwards. If something else
+// already holds it at 1, the add-on leaves it alone.
+constexpr const char* kAmdbPanResetVar = "AMDB_AMM_PAN_RESET";
+constexpr const char* kAmdbPanReleaseCommand = "0 (>L:AMDB_AMM_PAN_RESET)";
+constexpr float kAmdbPanResetHoldSeconds = 1.0f;
 
 bool synapticA220ShowAirportMap(int step) {
-  if (step == 0) {
-    a220QueueSide(1);
-    return false;
+  (void)step;  // everything is queued at once, the queue keeps the pace
+  const bool amdbMap = lvarExists(kAmdbPanResetVar) && readLVar(kAmdbPanResetVar) == 0;
+  if (amdbMap) {
+    queueCommand("1 (>L:%s)", kAmdbPanResetVar);
+    g_queueCleanupCommand = kAmdbPanReleaseCommand;
   }
-  a220QueueSide(2);
+  for (int i = 0; i < kA220DetentsToSmallestRange; ++i) {
+    queueCommandAfter(kA220DetentSeconds, "(>H:A220_CTP_RANGE_1_DEC)");
+    queueCommandAfter(kA220DetentSeconds, "(>H:A220_CTP_RANGE_2_DEC)");
+  }
+  for (int i = 0; i < kA220DetentsSmallestTo3000Ft; ++i) {
+    queueCommandAfter(i == 0 ? kA220SettleSeconds : kA220DetentSeconds, "(>H:A220_CTP_RANGE_1_INC)");
+    queueCommandAfter(kA220DetentSeconds, "(>H:A220_CTP_RANGE_2_INC)");
+  }
+  if (amdbMap) {
+    queueCommandAfter(kAmdbPanResetHoldSeconds, "%s", kAmdbPanReleaseCommand);
+  }
+  logLine("Synaptic A220: both range knobs %d detents down, then %d up to 3000 FT%s", kA220DetentsToSmallestRange,
+          kA220DetentsSmallestTo3000Ft, amdbMap ? "; AMDB airport map centred on the aircraft" : "");
   return true;
 }
 
@@ -505,10 +563,10 @@ void CALLBACK dispatchProc(SIMCONNECT_RECV* pData, DWORD cbData, void* pContext)
   switch (pData->dwID) {
     case SIMCONNECT_RECV_ID_EVENT_FRAME: {
       const auto* frame = static_cast<SIMCONNECT_RECV_EVENT_FRAME*>(pData);
-      sendNextQueuedCommand();
       // A frame rate outside 5..1000 fps can only be a bogus value; 30 fps keeps the clock going.
       const float frameRate = frame->fFrameRate;
       const float frameSeconds = frameRate >= 5.0f && frameRate <= 1000.0f ? 1.0f / frameRate : 1.0f / 30.0f;
+      sendNextQueuedCommand(frameSeconds);
       g_secondsSinceStart += frameSeconds;
       g_secondsSinceDataRequest += frameSeconds;
       if (g_secondsSinceDataRequest >= 0.999f) {

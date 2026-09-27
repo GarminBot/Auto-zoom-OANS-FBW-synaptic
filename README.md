@@ -15,7 +15,7 @@ zwei Stufen zu weit.
 | -------- | ----------------------------- | ---------------------------------- |
 | **FlyByWire A380X** | beide NDs: Modus ARC, Range ZOOM 0,5 NM (OANS), F/O-Seite 1 s nach dem Captain | Navigraph oder [AMDB Bridge](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB) (Setup-Option „A350 and A380X“) |
 | **iniBuilds A350** | beide NDs: Modus ARC, Range ZOOM 0,5 NM (ANF), F/O-Seite 2 s nach dem Captain | Navigraph oder AMDB Bridge (Setup-Option „A350 and A380X“) |
-| **Synaptic A220** | beide MAP-Displays: Range 3000 FT (= 0,49 NM, die Stufe am nächsten an 0,5 NM; Airport Moving Map) | Synaptic A220 **v1.0.10 oder neuer** (eigene Flughafenkarte) **oder** die A220-Karte von AMDB Bridge (Setup-Option „A220 moving map“, Paket `zzz-amdb-a220-amm`). Ohne beides zeigt der A220 in diesem Bereich „AIRPORT MAP FAULT“. |
+| **Synaptic A220** | beide MAP-Displays: Range 3000 FT (= 0,49 NM, die Stufe am nächsten an 0,5 NM; Airport Moving Map). Die Knöpfe werden in Handtempo gedreht, das dauert etwa 5 s. | Synaptic A220 **v1.0.10 oder neuer** (eigene Flughafenkarte) **oder** die A220-Karte von AMDB Bridge (Setup-Option „A220 moving map“, Paket `zzz-amdb-a220-amm`). Ohne beides zeigt der A220 in diesem Bereich „AIRPORT MAP FAULT“. |
 
 Mit AMDB Bridge: Starte AMDB Bridge **vor** dem Laden des Flugzeugs. Der FBW A380X fragt nur
 beim Laden nach, ob es Karten gibt.
@@ -84,24 +84,45 @@ beide Versionen gleichzeitig drin lassen.
   AMDB Bridge (bzw. verknüpfe Navigraph) vor dem Laden des Flugzeugs.
 - **A220 zeigt „AIRPORT MAP FAULT“:** Es ist keine Flughafenkarte installiert: A220 v1.0.10
   oder neuer, oder die A220-Karte von AMDB Bridge (und AMDB Bridge muss laufen).
+- **A220 mit der Karte von AMDB Bridge:**
+  - Die Karte erscheint **nur auf einem Display**, normalerweise dem des Captains. Das andere
+    zeigt weiter „AIRPORT MAP FAULT“. So ist AMDBs Karte gebaut (ein einziges Canvas), das
+    Addon kann es nicht ändern. Mit `L:AMDB_AMM_DISPLAY` lässt sich wählen, welches Display sie
+    bekommt, aber immer nur eins.
+  - **Das kleine weiße Dreieck ist deine echte Position.** Das weiße Flugzeug darüber ist das
+    Symbol des A220 selbst; AMDBs Karte richtet sich nicht danach, deshalb liegt es daneben,
+    nach dem Verschieben der Karte mit der Maus beliebig weit.
+  - Verschobene Karte: Das Addon zentriert AMDBs Karte bei jeder Landung wieder auf das
+    Flugzeug (`L:AMDB_AMM_PAN_RESET`).
+  - Eine fertige Fehlermeldung für AMDB Bridge zu den ersten beiden Punkten steht in
+    [docs/amdb-a220-map-issue.md](docs/amdb-a220-map-issue.md).
 - **iniBuilds A350:** Der A350 hat eine eigene Option dafür („autozoom“ im OIS, standardmäßig
   aus). Ist sie an, blendet der A350 die Karte schon beim Aufsetzen ein; das Addon zoomt danach
   auf 0,5 NM und prüft jede Seite 2 s später noch einmal. Springt die Karte trotzdem wieder auf
   eine weitere Stufe zurück, schalte die Option im OIS aus. Im Log steht dann
   `… is ZOOM 2 NM again …` o. ä.
 - **Synaptic A220 zeigt nicht 3000 FT:** Das Addon dreht den Knopf blind (der A220 meldet seine
-  Stufe nicht), ausgehend von 1000 FT als kleinster Stufe. Hat deine A220-Version andere Stufen,
-  sag Bescheid, welche Stufe am Ende eingestellt war.
+  Stufe nicht), ausgehend von 1000 FT als kleinster Stufe. Fass die Knöpfe nicht an, solange
+  es dreht (etwa 5 s nach dem Aufsetzen plus 3 s). Hat deine A220-Version andere Stufen, sag
+  Bescheid, welche Stufe am Ende eingestellt war.
 
 ## Status
 
-Version 1.3.0. Das Modul ist mit Compiler und Linker aus dem offiziellen MSFS 2024 SDK 1.7.3
+Version 1.4.0. Das Modul ist mit Compiler und Linker aus dem offiziellen MSFS 2024 SDK 1.7.3
 gebaut (`clang-cl.exe`, `wasm-ld.exe`), mit den Optionen des offiziellen
 „MSFS2024“-Visual-Studio-Toolsets. Die komplette Logik ist mit Host-Tests geprüft.
 
 Im Simulator getestet (MSFS 2024, AMDB Bridge): **FBW A380X funktioniert** (mit Version 1.1.0;
 danach nur die Zoom-Stufe geändert). iniBuilds A350 und Synaptic A220 sind im Sim noch nicht
 getestet. Welche Annahmen dort offen sind, steht in [docs/aircraft-profiles.md](docs/aircraft-profiles.md).
+
+Änderungen in 1.4.0:
+
+- Synaptic A220: Die Knopf-Rasten gehen mit Pausen raus (0,1 s, abwechselnd Captain und F/O,
+  1 s Pause vor dem Hochdrehen) statt eine pro Frame. Mit 1.3.0 hat der A220 nicht alle
+  mitbekommen: Captain stand auf 2000 FT, F/O auf 1000 FT statt beide auf 3000 FT.
+- Synaptic A220 mit der Karte von AMDB Bridge: Bei der Landung wird die Karte wieder auf das
+  Flugzeug zentriert, falls sie mit der Maus verschoben war.
 
 Änderungen in 1.3.0:
 

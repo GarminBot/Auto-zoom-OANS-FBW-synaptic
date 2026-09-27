@@ -114,9 +114,14 @@ bleibt er `0`, obwohl die Karten später vielleicht kommen. Erkannt wird der A38
 
 - Der A220 meldet den eingestellten Bereich nirgends zurück (keine L-Var, nur JS-intern; auch
   die [L-Var-Liste von Synaptic](https://docs.synapticsim.com/pilots/simvars) nennt für das CTP
-  nur Helligkeit und Crosstune). Das Addon dreht deshalb jeden Knopf 30 Rasten zurück auf den
+  nur Helligkeit und Crosstune). Das Addon dreht deshalb jeden Knopf 20 Rasten zurück auf den
   kleinsten Bereich (1000 FT) und dann 2 Rasten vor auf **3000 FT** (0,49 NM), die Stufe, die
   den 0,5 NM der beiden Airbus-Profile am nächsten kommt.
+- **Tempo:** Bis Version 1.3.0 ging eine Raste pro Frame raus (bei 60 fps 60 pro Sekunde). Im
+  Sim-Test standen danach Captain auf 2000 FT und F/O auf 1000 FT statt beide auf 3000 FT: Der
+  A220 hat nicht alle Rasten mitbekommen. Seit 1.4.0 gehen die Rasten 0,1 s auseinander raus,
+  abwechselnd Captain und F/O, also pro Knopf alle 0,2 s, etwa im Tempo einer Hand am Knopf.
+  Zwischen dem Herunter- und dem Hochdrehen liegt 1 s Pause. Alles zusammen dauert etwa 5 s.
 - **Annahme:** Der Knopf bleibt am Ende stehen und springt nicht vom kleinsten auf den größten
   Bereich. So verhalten sich der echte Pro-Line-Fusion-Knopf und das MSFS Avionics Framework,
   auf dem die A220-Displays aufbauen. Im Sim nachgeprüft ist es nicht.
@@ -131,6 +136,23 @@ bleibt er `0`, obwohl die Karten später vielleicht kommen. Erkannt wird der A38
   `L:AMDB_AMM_VISIBLE` auf 0 (automatisch) steht. Das Addon dreht den Knopf auf 3000 FT, damit
   erscheint auch diese Karte
   ([`amdb-a220-amm.js`](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB/blob/main/packages/msfs-a220-amm/html_ui/Pages/VCockpit/Instruments/a22x/DisplayUnits/amdb-a220-amm.js)).
+- **Grenzen der AMDB-Karte** (aus ihrem Quellcode, im Sim so gesehen; beheben kann das nur
+  AMDB Bridge):
+  - **Nur ein Display:** `findMount()` nimmt das erste ND (1 bis 4), das „AIRPORT MAP FAULT“
+    zeigt, und es gibt genau ein Canvas (`AMDB_A220_AMM_CANVAS`). Das zweite ND zeigt weiter
+    „AIRPORT MAP FAULT“. `L:AMDB_AMM_DISPLAY` legt fest, welches ND die Karte bekommt, aber
+    immer nur eins.
+  - **Flugzeugsymbol:** AMDB zeichnet die eigene Position als kleines weißes Dreieck
+    (`drawOwnship`), fest bei halber ND-Breite und 78 % der Höhe, nach dem Verschieben mit der
+    Maus an der echten Stelle auf der Karte. Das weiße Flugzeug darüber ist das eigene Symbol
+    des A220. AMDB lässt es stehen, richtet die Karte aber nicht daran aus. Es liegt deshalb
+    neben der echten Position, nach dem Verschieben der Karte beliebig weit. **Das Dreieck ist
+    die echte Position.**
+  - **Verschieben:** Mit der Maus gezogen, folgt die Karte dem Flugzeug nicht mehr, bis
+    `L:AMDB_AMM_PAN_RESET` = 1 ist. Das Addon setzt diese L-Var bei der Landung auf 1, solange
+    es die Knöpfe dreht, und danach wieder auf 0. So zeigt die Karte nach jeder Landung wieder
+    das Flugzeug. Die L-Var gibt es erst, wenn die Karte einmal auf dem Schirm war; vorher kann
+    auch nichts verschoben sein, und das Addon lässt sie weg.
 - Der echte A220 zeigt die Karte nach der Landung nicht automatisch; das Addon ergänzt das
   bewusst, damit sich alle drei Flugzeuge gleich verhalten.
 

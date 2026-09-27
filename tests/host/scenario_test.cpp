@@ -57,6 +57,16 @@ const std::vector<std::string> kA220Ranges = {"1000 FT", "2000 FT", "3000 FT", "
                                               "10 NM",   "20 NM",   "40 NM",   "80 NM", "160 NM", "320 NM"};
 int g_a220Range[3] = {0, 6, 6};  // index per CTP (1 and 2)
 
+// Frames since the start, at 60 fps (see frame()).
+long g_frameCount = 0;
+
+// In the simulator the A220 lost detents that came once per frame. The fake loses a detent
+// that reaches a knob less than 150 ms after that knob's previous one.
+constexpr long kA220MinFramesBetweenDetents = 9;
+long g_a220LastDetentFrame[3] = {-1000, -1000, -1000};
+int g_a220LostDetents = 0;
+std::vector<long> g_a220DetentFrames;  // when each H event arrived, for the pacing checks
+
 void fbwApplyEvent(const std::string& name, int value) {
   static const std::regex pattern("A32NX\\.FCU_EFIS_([LR])_(MODE|RANGE)_SET");
   std::smatch match;
@@ -80,7 +90,14 @@ void a220ApplyEvent(const std::string& name) {
     fail("unknown A220 H-event " + name);
     return;
   }
-  int& index = g_a220Range[std::stoi(match[1].str())];
+  const int ctp = std::stoi(match[1].str());
+  g_a220DetentFrames.push_back(g_frameCount);
+  if (g_frameCount - g_a220LastDetentFrame[ctp] < kA220MinFramesBetweenDetents) {
+    ++g_a220LostDetents;
+    return;
+  }
+  g_a220LastDetentFrame[ctp] = g_frameCount;
+  int& index = g_a220Range[ctp];
   index += match[2] == "INC" ? 1 : -1;
   index = std::max(0, std::min(index, static_cast<int>(kA220Ranges.size()) - 1));
 }
@@ -89,7 +106,10 @@ void loadAircraft(Type type, const std::string& title, const std::string& path) 
   g_aircraft.type = type;
   g_aircraft.title = title;
   g_aircraft.path = path;
-  g_lvars.clear();
+  // The aircraft's L-vars go with it; those of AMDB Bridge's A220 map belong to that add-on.
+  for (auto it = g_lvars.begin(); it != g_lvars.end();) {
+    it = it->first.rfind("AMDB_", 0) == 0 ? std::next(it) : g_lvars.erase(it);
+  }
 }
 
 void setUpFbw(int ndMode, int rangePosition, bool oansAvailable,
@@ -124,6 +144,7 @@ int g_commandsThisFrame = 0;
 float g_frameRate = 60.0f;  // what the Frame event reports
 
 void sendSystemEvent(const char* systemEventName) {
+  g_commandsThisFrame = 0;  // handled between frames
   for (const auto& [id, name] : g_systemEvents) {
     if (name != systemEventName) {
       continue;
@@ -161,6 +182,7 @@ int g_dataDeliveries = 0;
 
 // One simulator frame at 60 fps.
 void frame() {
+  ++g_frameCount;
   g_commandsThisFrame = 0;
   for (const auto& [id, name] : g_systemEvents) {
     if (name == "Frame") {
@@ -383,7 +405,7 @@ int main() {
   expectCommands("FBW: nothing more while taxiing in", {});
   {
     const std::string log = readLog();
-    expectLogContains("log: module start", log, "OANS Auto Zoom 1.3.0 started");
+    expectLogContains("log: module start", log, "OANS Auto Zoom 1.4.0 started");
     expectLogContains("log: unsupported aircraft", log, "\"Asobo Cessna 172\"");
     expectLogContains("log: aircraft recognised", log,
                       "aircraft \"FlyByWire A380X (A380-842)\" (SimObjects\\AirPlanes\\FlyByWire_A380X\\presets"
@@ -609,6 +631,21 @@ int main() {
   expectCommands("keyword in the user's install path is ignored", {});
 
   // --- Synaptic A220 ---------------------------------------------------------------
+  const std::string dec1 = "(>H:A220_CTP_RANGE_1_DEC)";
+  const std::string dec2 = "(>H:A220_CTP_RANGE_2_DEC)";
+  const std::string inc1 = "(>H:A220_CTP_RANGE_1_INC)";
+  const std::string inc2 = "(>H:A220_CTP_RANGE_2_INC)";
+  std::vector<std::string> knobs;  // both knobs 20 detents down, then 2 up, alternating
+  for (int i = 0; i < 20; ++i) {
+    knobs.push_back(dec1);
+    knobs.push_back(dec2);
+  }
+  for (int i = 0; i < 2; ++i) {
+    knobs.push_back(inc1);
+    knobs.push_back(inc2);
+  }
+
+  // Without AMDB Bridge's airport map (its L-var does not exist): the knobs only.
   loadAircraft(Type::SynapticA220, "A220-300",
                "SimObjects\\Airplanes\\Synaptic_A220\\presets\\inibuilds\\A220-300\\config\\aircraft.cfg");
   sendSystemEvent("AircraftLoaded");
@@ -616,37 +653,76 @@ int main() {
   g_a220Range[2] = static_cast<int>(kA220Ranges.size()) - 1;  // first officer at the widest range
   takeOffAndClimb();
   expectCommands("A220: nothing during taxi, take-off and climb", {});
-  fly(4, true, 120, 0);
-  std::vector<std::string> expected;
-  for (int ctp = 1; ctp <= 2; ++ctp) {
-    for (int i = 0; i < 30; ++i) {
-      expected.push_back("(>H:A220_CTP_RANGE_" + std::to_string(ctp) + "_DEC)");
-    }
-    for (int i = 0; i < 2; ++i) {
-      expected.push_back("(>H:A220_CTP_RANGE_" + std::to_string(ctp) + "_INC)");
-    }
-  }
-  expectCommands("A220: both range knobs to the smallest range, then up to 3000 FT", expected);
+  fly(2, true, 120, 0);
+  g_a220DetentFrames.clear();
+  g_a220LostDetents = 0;
+  fly(8, true, 100, 0);  // the landing, then the knobs at the pace of a hand
+  expectCommands("A220: both knobs to the smallest range, then up to 3000 FT, alternating", knobs);
+  expectValue("A220: no detent lost", g_a220LostDetents, 0);
   expectValue("A220: captain map at 3000 FT", kA220Ranges[g_a220Range[1]] == "3000 FT", 1);
   expectValue("A220: first officer map at 3000 FT", kA220Ranges[g_a220Range[2]] == "3000 FT", 1);
+  if (g_a220DetentFrames.size() == knobs.size()) {
+    long closest = 1000000;
+    for (size_t i = 1; i < g_a220DetentFrames.size(); ++i) {
+      closest = std::min(closest, g_a220DetentFrames[i] - g_a220DetentFrames[i - 1]);
+    }
+    expectValue("A220: detents at least 0.1 s apart", closest >= 6, 1);
+    expectValue("A220: 1 s at the smallest range before turning back up",
+                g_a220DetentFrames[40] - g_a220DetentFrames[39] >= 60, 1);
+    expectValue("A220: whole sequence within 6 s", g_a220DetentFrames.back() - g_a220DetentFrames.front() <= 360, 1);
+  } else {
+    fail("A220: unexpected number of detents: " + std::to_string(g_a220DetentFrames.size()));
+  }
+  expectLogContains("log: A220 sequence", readLog(), "Synaptic A220: both range knobs 20 detents down, then 2 up to 3000 FT");
   fly(120, true, 15, 0);
   expectCommands("A220: nothing more while taxiing in", {});
 
-  // Leaving the A220 while the knob sequence is still running stops it.
+  // With AMDB Bridge's airport map: held on the aircraft while the knobs turn, then let go.
+  g_lvars["AMDB_AMM_PAN_RESET"] = 0;  // the map has been on screen, so its L-var exists
+  g_a220Range[1] = 6;
+  g_a220Range[2] = 6;
+  takeOffAndClimb();
+  fly(2, true, 120, 0);
+  fly(9, true, 100, 0);
+  {
+    std::vector<std::string> withAmdb = {"1 (>L:AMDB_AMM_PAN_RESET)"};
+    withAmdb.insert(withAmdb.end(), knobs.begin(), knobs.end());
+    withAmdb.push_back("0 (>L:AMDB_AMM_PAN_RESET)");
+    expectCommands("A220 with AMDB's map: centred on the aircraft while the knobs turn", withAmdb);
+  }
+  expectValue("A220 with AMDB's map: let go afterwards", g_lvars["AMDB_AMM_PAN_RESET"], 0);
+  expectValue("A220 with AMDB's map: captain at 3000 FT", kA220Ranges[g_a220Range[1]] == "3000 FT", 1);
+  expectLogContains("log: A220 AMDB", readLog(), "AMDB airport map centred on the aircraft");
+  fly(60, true, 15, 0);
+
+  // Something else already holds AMDB's map on the aircraft: left alone.
+  g_lvars["AMDB_AMM_PAN_RESET"] = 1;
+  takeOffAndClimb();
+  fly(2, true, 120, 0);
+  fly(9, true, 100, 0);
+  expectCommands("A220 with AMDB's map already held: the knobs only", knobs);
+  expectValue("A220 with AMDB's map already held: still held", g_lvars["AMDB_AMM_PAN_RESET"], 1);
+  g_lvars["AMDB_AMM_PAN_RESET"] = 0;
+  fly(60, true, 15, 0);
+
+  // Leaving the A220 while the sequence is still running stops it, and lets go of AMDB's map.
   takeOffAndClimb();
   fly(2, true, 120, 0);
   g_commands.clear();
-  for (int i = 0; i < 6; ++i) {
-    frame();  // first frame: third second on the ground, the landing; then five detents
+  for (int i = 0; i < 60; ++i) {
+    frame();  // first frame: third second on the ground, the landing; then the first detents
   }
-  expectValue("A220: five detents sent in the first frames", static_cast<double>(g_commands.size()), 5);
+  expectValue("A220: sequence under way after one second",
+              g_commands.size() > 5 && g_commands.front() == "1 (>L:AMDB_AMM_PAN_RESET)", 1);
+  expectValue("A220: AMDB's map held meanwhile", g_lvars["AMDB_AMM_PAN_RESET"], 1);
   loadAircraft(Type::Other, "Asobo Cessna 172", "SimObjects\\Airplanes\\Asobo_C172\\aircraft.cfg");
   sendSystemEvent("AircraftLoaded");
+  expectValue("A220: AMDB's map let go when the aircraft changes", g_lvars["AMDB_AMM_PAN_RESET"], 0);
   g_commands.clear();
-  for (int i = 0; i < 54; ++i) {
+  for (int i = 0; i < 60; ++i) {
     frame();  // rest of that second
   }
-  for (int i = 0; i < 5; ++i) {
+  for (int i = 0; i < 10; ++i) {
     tick();
   }
   expectCommands("A220: remaining detents are dropped when the aircraft changes", {});
